@@ -28,12 +28,22 @@
 #ifndef RUNTIME_CLIENT
 #define RUNTIME_CLIENT
 
-#include <aalsdk/AAL.h>
-#include <aalsdk/xlRuntime.h>
-#include <aalsdk/AALLoggerExtern.h> // Logger
+#ifdef HARPv1
+	#include <aalsdk/AAL.h>
+	#include <aalsdk/xlRuntime.h>
+	#include <aalsdk/AALLoggerExtern.h> // Logger
 
-#include <aalsdk/service/ICCIAFU.h>
-#include <aalsdk/service/ICCIClient.h>
+	#include <aalsdk/service/ICCIAFU.h>
+	#include <aalsdk/service/ICCIClient.h>
+#else
+	#include <aalsdk/AALTypes.h>
+	#include <aalsdk/Runtime.h>
+	#include <aalsdk/AALLoggerExtern.h>
+
+	#include <aalsdk/service/IALIAFU.h>
+#endif
+
+using namespace AAL;
 
 // Convenience macros for printing messages and errors.
 #ifdef MSG
@@ -52,37 +62,40 @@
 //#define  HWAFU
 #define  ASEAFU
 
-using namespace AAL;
-
 /// @brief   Define our Runtime client class so that we can receive the runtime started/stopped notifications.
 ///
 /// We implement a Service client within, to handle AAL Service allocation/free.
 /// We also implement a Semaphore for synchronization with the AAL runtime.
-class RuntimeClient : public CAASBase, public IRuntimeClient
-{
+class RuntimeClient : public CAASBase, public IRuntimeClient {
 public:
 	RuntimeClient();
 	~RuntimeClient();
 
 	void end();
-
+#ifdef HARPv1
 	IRuntime* getRuntime();
-
+#endif
 	btBool isOK();
 
 	// <begin IRuntimeClient interface>
-	void runtimeStarted(IRuntime *pRuntime, const NamedValueSet &rConfigParms);
+	void runtimeStarted(IRuntime* pRuntime, const NamedValueSet &rConfigParms);
 	void runtimeStopped(IRuntime *pRuntime);
 	void runtimeStartFailed(const IEvent &rEvent);
-	void runtimeAllocateServiceFailed(IEvent const &rEvent);
-	void runtimeAllocateServiceSucceeded(IBase *pClient, TransactionID const &rTranID);
+#ifndef HARPv1
+	void runtimeStopFailed(const IEvent &rEvent);
+	void runtimeCreateOrGetProxyFailed(IEvent const &rEvent){}; //Not used
+#endif 
+	void runtimeAllocateServiceFailed( IEvent const &rEvent);
+	void runtimeAllocateServiceSucceeded(IBase* pClient,TransactionID const &rTranID);
 	void runtimeEvent(const IEvent &rEvent);
 	// <end IRuntimeClient interface>
-protected:
-	IRuntime 		*m_pRuntime;  // Pointer to AAL runtime instance.
-	Runtime 		m_Runtime;   // AAL Runtime
-	btBool 			m_isOK;      // Status
-	CSemaphore 	m_Sem;       // For synchronizing with the AAL runtime.
+
+#ifdef HARPv1
+	IRuntime        *m_pRuntime;  // Pointer to AAL runtime instance.
+	btBool           m_isOK;      // Status
+#endif
+	Runtime          m_Runtime;   // AAL Runtime
+	CSemaphore       m_Sem;       // For synchronizing with the AAL runtime.
 };
 
 #endif

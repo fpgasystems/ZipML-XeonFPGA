@@ -50,7 +50,7 @@ port(
 	start_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	binarize_b_value : in std_logic;
 	b_value_to_binarize_to : in std_logic_vector(31 downto 0);
-	dimension : in std_logic_vector(17 downto 0);
+	accumulation_count : in std_logic_vector(17 downto 0);
 	number_of_samples : in std_logic_vector(31 downto 0);
 	number_of_CL_to_process : in std_logic_vector(31 downto 0));
 end floatFSGD;
@@ -62,8 +62,9 @@ constant FIFO_DEPTH_BITS : integer := MAX_DIMENSION_BITS-4;
 constant FIFO_DEPTH : integer := 2**FIFO_DEPTH_BITS-10;
 constant X_CL_COUNT : integer := MAX_DIMENSION/16;
 
-signal accumulation_count : integer;
-signal remainder : integer;
+signal accumulation_count_unsigned : unsigned(17 downto 0);
+
+--signal read_rate_limit : unsigned(1 downto 0);
 
 signal NumberOfCLToProcess : unsigned(31 downto 0) := (others => '0');
 signal NumberOfRequestedReads : unsigned(31 downto 0) := (others => '0');
@@ -223,7 +224,7 @@ port (
 	resetn : in std_logic;
 
 	trigger : in std_logic;
-	dimension : in std_logic_vector(17 downto 0);
+	accumulation_count : in std_logic_vector(17 downto 0);
 	vector1 : in std_logic_vector(511 downto 0);
 	vector2 : in std_logic_vector(511 downto 0);
 	result_almost_valid : out std_logic;
@@ -401,7 +402,7 @@ port map (
 	resetn => resetn,
 
 	trigger => ififo_valid,
-	dimension => dimension,
+	accumulation_count => accumulation_count,
 	vector1 => ififo_dout,
 	vector2 => x_for_dot_product_float,
 	result_almost_valid => dot_product_result_almost_valid,
@@ -443,8 +444,7 @@ port map (
 	result_valid => new_x_valid,
 	result => new_x);
 
-remainder <= 1 when unsigned(dimension(3 downto 0)) > 0 else 0;
-accumulation_count <= to_integer(shift_right(unsigned(dimension), 4)) + remainder;
+accumulation_count_unsigned <= unsigned(accumulation_count);
 
 sample_index_to_read_unsigned <= to_unsigned(sample_index_to_read, 32);
 gradient_valid_counter_unsigned <= to_unsigned(gradient_valid_counter, 32);
@@ -463,6 +463,8 @@ if clk'event and clk = '1' then
 	NumberOfSamplesInCacheLines <= shift_right(NumberOfSamples,4) + 1;
 
 	if start = '0' then
+		--read_rate_limit <= (others => '0');
+
 		NumberOfRequestedReads <= (others => '0');
 		NumberOfCompletedReads <= (others => '0');
 		NumberOfRequestedWrites <= (others => '0');
@@ -502,8 +504,11 @@ if clk'event and clk = '1' then
 
 		done <= '0';
 	else
+		--read_rate_limit <= read_rate_limit + 1;
+
 		read_request <= '0';
 		reorder_start_address_adjust <= '0';
+		--if read_rate_limit = 0 and start = '1' and NumberOfRequestedReads < NumberOfCLToProcess and write_request_almostfull = '0' and read_request_almostfull = '0' and NumberOfRequestedReads - NumberOfCompletedReads < a_row_fifo_free_count then
 		if start = '1' and NumberOfRequestedReads < NumberOfCLToProcess and write_request_almostfull = '0' and read_request_almostfull = '0' and NumberOfRequestedReads - NumberOfCompletedReads < a_row_fifo_free_count then
 			read_request <= '1';
 			read_request_address <= std_logic_vector(unsigned(start_address) + NumberOfRequestedReads);
@@ -527,7 +532,7 @@ if clk'event and clk = '1' then
 			
 			new_CL_available(0) <= '1';
 
-			if count_upto_a_whole_row = accumulation_count-1 then
+			if count_upto_a_whole_row = accumulation_count_unsigned-1 then
 				count_upto_a_whole_row <= 0;
 				new_row_available(0) <= '1';
 				
@@ -558,7 +563,7 @@ if clk'event and clk = '1' then
 
 		if new_CL_available(0) = '1' then
 			x_for_dot_product <= x(x_index1);
-			if x_index1 = accumulation_count-1 then
+			if x_index1 = accumulation_count_unsigned-1 then
 				x_index1 <= 0;
 			else
 				x_index1 <= x_index1 + 1;
@@ -571,7 +576,7 @@ if clk'event and clk = '1' then
 			else
 				x_for_update <= x_loading(x_index2);
 			end if;
-			if x_index2 = accumulation_count-1 then
+			if x_index2 = accumulation_count_unsigned-1 then
 				x_index2 <= 0;
 				if gradient_valid_counter = NumberOfSamples-1 then
 					gradient_valid_counter <= 0;
@@ -589,7 +594,7 @@ if clk'event and clk = '1' then
 			end if;
 
 			x_loading(x_index3) <= new_x;
-			if x_index3 = accumulation_count-1 then
+			if x_index3 = accumulation_count_unsigned-1 then
 				x_index3 <= 0;
 				if sample_index_to_read = NumberOfSamples-1 then
 					sample_index_to_read <= 0;
@@ -612,7 +617,7 @@ if clk'event and clk = '1' then
 			write_request <= '1';
 			write_request_address <= std_logic_vector(NumberOfRequestedWrites);
 			write_request_data <= x(write_back_index);
-			if write_back_index = accumulation_count-1 then
+			if write_back_index = accumulation_count_unsigned-1 then
 				write_back_index <= 0;
 				write_back_the_model <= '0';
 

@@ -25,7 +25,7 @@ port (
 	resetn : in std_logic;
 
 	trigger : in std_logic;
-	dimension : in std_logic_vector(17 downto 0);
+	accumulation_count : in std_logic_vector(17 downto 0);
 	vector1 : in std_logic_vector(511 downto 0);
 	vector2 : in std_logic_vector(511 downto 0);
 	result_almost_valid : out std_logic;
@@ -35,8 +35,7 @@ end hybrid_dot_product;
 
 architecture behavioral of hybrid_dot_product is
 
-signal accumulation_count : integer;
-signal remainder : integer;
+signal accumulation_count_unsigned : unsigned(17 downto 0);
 
 signal float_mult_result_almost_valid : std_logic;
 signal float_mult_result_valid : std_logic;
@@ -164,8 +163,7 @@ port map (
 	dataa => std_logic_vector(internal_result),
 	result => result);
 
-remainder <= 1 when unsigned(dimension(3 downto 0)) > 0 else 0;
-accumulation_count <= to_integer(shift_right(unsigned(dimension), 4)) + remainder;
+accumulation_count_unsigned <= unsigned(accumulation_count);
 
 result_almost_valid <= internal_result_valid(3);
 
@@ -188,7 +186,7 @@ if clk'event and clk = '1' then
 
 		internal_result_valid(0) <= '0';
 		if adder_tree_result_valid = '1' then
-			if internal_accumulation_count = accumulation_count-1 then
+			if internal_accumulation_count = accumulation_count_unsigned-1 then
 				internal_accumulation_count <= 0;
 				internal_result_valid(0) <= '1';
 				internal_result <= accumulation + signed(adder_tree_result);
@@ -202,7 +200,7 @@ if clk'event and clk = '1' then
 		result_valid <= '0';
 		if internal_result_valid(5) = '1' or valid_pulse_counter > 0 then
 			result_valid <= '1';
-			if valid_pulse_counter = accumulation_count-1 then
+			if valid_pulse_counter = accumulation_count_unsigned-1 then
 				valid_pulse_counter <= 0;
 			else
 				valid_pulse_counter <= valid_pulse_counter + 1;

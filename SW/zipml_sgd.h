@@ -31,6 +31,10 @@
 using namespace std;
 
 class zipml_sgd {
+private:
+	uint32_t page_size_in_cache_lines;
+	uint32_t pages_to_allocate;
+
 public:
 	float* a;	// Data set features matrix: numSamples x numFeatures
 	float* b;	// Data set labels vector: numSamples
@@ -40,6 +44,9 @@ public:
 
 	uint32_t numFeatures;
 	uint32_t numSamples;
+
+	uint32_t numValuesPerLine;
+	uint32_t accumulationCount;
 
 	char gotFPGA;
 	RuntimeClient runtimeClient;
@@ -52,7 +59,7 @@ public:
 	float b_min;
 	uint32_t b_toIntegerScaler;
 
-	zipml_sgd(char getFPGA, uint32_t _b_toIntegerScaler);
+	zipml_sgd(char getFPGA, uint32_t _b_toIntegerScaler, uint32_t _numValuesPerLine);
 	~zipml_sgd();
 
 	float calculate_loss(float x[]);
@@ -60,6 +67,19 @@ public:
 	// Data loading functions
 	void load_tsv_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures);
 	void load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures);
+	void load_raw_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures);
+	void generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, char binary);
+
+	void print_samples(uint32_t num) {
+		for (uint32_t i = 0; i < num; i++) {
+			cout << "a" << i << ": " << endl;
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				cout << a[i*numFeatures + j] << " ";
+			}
+			cout << endl;
+			cout << "b" << i << ": " << b[i] << endl;
+		}
+	}
 
 	// Normalization and data shaping
 	void a_normalize(char toMinus1_1, char rowOrColumnWise);
@@ -74,23 +94,28 @@ public:
 	void quantize_data_integer(int aiq[], uint32_t numBits);
 
 	// Linear Regression
-	void float_linreg_SGD(float x_history[], uint32_t numberOfIterations, float stepSize);
-	void Qfixed_linreg_SGD(float x_history[], uint32_t numberOfIterations, int stepSizeShifter, int quantizationBits);
+	void float_linreg_SGD(float x_history[], uint32_t numEpochs, float stepSize);
+	void Qfixed_linreg_SGD(float x_history[], uint32_t numEpochs, int stepSizeShifter, int quantizationBits);
 
 	// FPGA-based SGD (solves either linear regression of L2 SVM, depending on what is loaded)
-	void floatFSGD(float x[], uint32_t numberOfIterations, float stepSize, int binarize_b, float b_toBinarizeTo);
-	void qFSGD(float x[], uint32_t numberOfIterations, int stepSizeShifter, int quantizationBits, int binarize_b, int bi_toBinarizeTo);
+	void floatFSGD(float x[], uint32_t numEpochs, float stepSize, int binarize_b, float b_toBinarizeTo);
+	void qFSGD(float x[], uint32_t numEpochs, int stepSizeShifter, int quantizationBits, int binarize_b, int bi_toBinarizeTo);
 
 	// Calculate loss and log into file with detailed experiment information
-	void log_history(char SWorFPGA, char fileOutput, int quantizationBits, float stepSize, int numberOfIterations, double time, float* x_history);
+	void log_history(char SWorFPGA, char fileOutput, int quantizationBits, float stepSize, int numEpochs, double time, float* x_history);
 
 	// Perform inference
 	void inference(float result[], float* x);
 	void multi_classification(float* xs[], uint32_t numClasses);
 };
 
-zipml_sgd::zipml_sgd(char getFPGA, uint32_t _b_toIntegerScaler) {
+zipml_sgd::zipml_sgd(char getFPGA, uint32_t _b_toIntegerScaler, uint32_t _numValuesPerLine) {
 	srand(7);
+
+	page_size_in_cache_lines = 65536; // 65536 x 64B = 4 MB
+	pages_to_allocate = 1;
+
+	numValuesPerLine = _numValuesPerLine;
 
 	a = NULL;
 	b = NULL;
@@ -102,7 +127,7 @@ zipml_sgd::zipml_sgd(char getFPGA, uint32_t _b_toIntegerScaler) {
 	b_toIntegerScaler = _b_toIntegerScaler;
 
 	if (getFPGA == 1) {
-		interfaceFPGA = new iFPGA(&runtimeClient);
+		interfaceFPGA = new iFPGA(&runtimeClient, pages_to_allocate, page_size_in_cache_lines);
 		if(!runtimeClient.isOK()){
 			cout << "FPGA runtime failed to start" << endl;
 			exit(1);
@@ -130,15 +155,28 @@ void zipml_sgd::load_tsv_data(char* pathToFile, uint32_t _numSamples, uint32_t _
 
 	numSamples = _numSamples;
 	numFeatures = _numFeatures+1; // For the bias term
-	a = (float*)malloc(numSamples*numFeatures*sizeof(float)); 
-	b = (float*)malloc(numSamples*sizeof(float));
-	bi = (int*)malloc(numSamples*sizeof(int));
+
+	accumulationCount = int(numFeatures/numValuesPerLine) + (numFeatures%numValuesPerLine > 0);
+	if (numFeatures%numValuesPerLine == 0)
+		accumulationCount++;
+
+	cout << "accumulationCount: " << accumulationCount << endl;
+
+	if (a != NULL)
+		free(a);
+	a = (float*)calloc(numSamples*numFeatures, sizeof(float));
+	if (b != NULL)
+		free(b);
+	b = (float*)calloc(numSamples, sizeof(float));
+	if (bi != NULL)
+		free(bi);
+	bi = (int*)calloc(numSamples, sizeof(int));
 
 	FILE* f;
 	f = fopen(pathToFile, "r");
 
 	uint32_t sample;
-	uint32_t feature;
+	int32_t feature;
 	float value;
 	while(fscanf(f, "%d\t%d\t%f", &sample, &feature, &value) != EOF) {
 		if (feature == -2) {
@@ -150,7 +188,7 @@ void zipml_sgd::load_tsv_data(char* pathToFile, uint32_t _numSamples, uint32_t _
 	}
 	fclose(f);
 
-	for (int i = 0; i < numSamples; i++) { // Bias term
+	for (uint32_t i = 0; i < numSamples; i++) { // Bias term
 		a[i*numFeatures] = 1.0;
 	}
 
@@ -163,14 +201,27 @@ void zipml_sgd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_
 
 	numSamples = _numSamples;
 	numFeatures = _numFeatures+1; // For the bias term
-	a = (float*)malloc(numSamples*numFeatures*sizeof(float)); 
-	b = (float*)malloc(numSamples*sizeof(float));
-	bi = (int*)malloc(numSamples*sizeof(int));
+
+	accumulationCount = int(numFeatures/numValuesPerLine) + (numFeatures%numValuesPerLine > 0);
+	if (numFeatures%numValuesPerLine == 0)
+		accumulationCount++;
+
+	cout << "accumulationCount: " << accumulationCount << endl;
+
+	if (a != NULL)
+		free(a);
+	a = (float*)calloc(numSamples*numFeatures, sizeof(float));
+	if (b != NULL)
+		free(b);
+	b = (float*)calloc(numSamples, sizeof(float));
+	if (bi != NULL)
+		free(bi);
+	bi = (int*)calloc(numSamples, sizeof(int));
 
 	string line;
 	ifstream f(pathToFile);
 
-	int index = 0;
+	uint32_t index = 0;
 	if (f.is_open()) {
 		while( index < numSamples ) {
 			getline(f, line);
@@ -179,7 +230,7 @@ void zipml_sgd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_
 			int pos2 = 0;
 			int column = 0;
 			//while ( column < numFeatures-1 ) {
-			while ( pos2 < line.length()+1 ) {
+			while ( pos2 < (int)line.length()+1 ) {
 				if (pos2 == 0) {
 					pos2 = line.find(" ", pos1);
 					float temp = stof(line.substr(pos1, pos2-pos1), NULL);
@@ -206,7 +257,7 @@ void zipml_sgd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_
 	else
 		cout << "Unable to open file " << pathToFile << endl;
 
-	for (int i = 0; i < numSamples; i++) { // Bias term
+	for (uint32_t i = 0; i < numSamples; i++) { // Bias term
 		a[i*numFeatures] = 1.0;
 	}
 	
@@ -214,13 +265,106 @@ void zipml_sgd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_
 	cout << "numFeatures: " << numFeatures << endl;
 }
 
+void zipml_sgd::load_raw_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures) {
+	cout << "Reading " << pathToFile << endl;
+
+	numSamples = _numSamples;
+	numFeatures = _numFeatures;
+
+	accumulationCount = int(numFeatures/numValuesPerLine) + (numFeatures%numValuesPerLine > 0);
+	if (numFeatures%numValuesPerLine == 0)
+		accumulationCount++;
+
+	cout << "accumulationCount: " << accumulationCount << endl;
+
+	if (a != NULL)
+		free(a);
+	a = (float*)calloc(numSamples*numFeatures, sizeof(float));
+	if (b != NULL)
+		free(b);
+	b = (float*)calloc(numSamples, sizeof(float));
+	if (bi != NULL)
+		free(bi);
+	bi = (int*)calloc(numSamples, sizeof(int));
+
+	FILE* f = fopen(pathToFile, "r");
+
+	double* temp;
+	temp = (double*)malloc(numSamples*(numFeatures+1)*sizeof(double));
+	size_t read_result = fread(temp, sizeof(double), numSamples*(numFeatures+1), f);
+	if (read_result == numSamples*(numFeatures+1))
+		cout << "Read is successful" << endl;
+
+	for (uint32_t i = 0; i < numSamples; i++) {
+		b[i] = (float)temp[i*(numFeatures+1)];
+		bi[i] = (int)(b[i]*b_toIntegerScaler);
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			a[i*numFeatures + j] = (float)temp[i*(numFeatures+1) + j+1];
+		}
+	}
+	free(temp);
+	fclose(f);
+
+	cout << "numSamples: " << numSamples << endl;
+	cout << "numFeatures: " << numFeatures << endl;
+}
+
+void zipml_sgd::generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, char binary) {
+	numSamples = _numSamples;
+	numFeatures = _numFeatures;
+
+	accumulationCount = int(numFeatures/numValuesPerLine) + (numFeatures%numValuesPerLine > 0);
+	if (numFeatures%numValuesPerLine == 0)
+		accumulationCount++;
+
+	cout << "accumulationCount: " << accumulationCount << endl;
+
+	if (a != NULL)
+		free(a);
+	a = (float*)calloc(numSamples*numFeatures, sizeof(float));
+	if (b != NULL)
+		free(b);
+	b = (float*)calloc(numSamples, sizeof(float));
+	if (bi != NULL)
+		free(bi);
+	bi = (int*)calloc(numSamples, sizeof(int));
+
+	srand(7);
+	float* x = (float*)malloc(numFeatures*sizeof(float));
+	for (uint32_t j = 0; j < numFeatures; j++) {
+		x[j] = ((float)rand())/RAND_MAX;
+	}
+
+	for (uint32_t i = 0; i < numSamples; i++) {
+		if (binary == 1) {
+			float temp = ((float)rand())/RAND_MAX;
+			if (temp > 0.5)
+				b[i] = (float)1.0;
+			else
+				b[i] = (float)-1.0;
+		}
+		else
+			b[i] = (float)rand()/RAND_MAX;
+
+		bi[i] = (int)(b[i]*b_toIntegerScaler);
+
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			a[i*numFeatures + j] = b[i]*x[j] + (float)rand()/(RAND_MAX);
+		}
+	}
+	free(x);
+
+	cout << "numSamples: " << numSamples << endl;
+	cout << "numFeatures: " << numFeatures << endl;
+}
+
 void zipml_sgd::a_normalize(char toMinus1_1, char rowOrColumnWise) {
 	a_normalizedToMinus1_1 = toMinus1_1;
 	if (rowOrColumnWise == 'r') {
-		for (int i = 0; i < numSamples; i++) {
+		for (uint32_t i = 0; i < numSamples; i++) {
 			float amin = numeric_limits<float>::max();
 			float amax = numeric_limits<float>::min();
-			for (int j = 0; j < numFeatures; j++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
 				float a_here = a[i*numFeatures + j];
 				if (a_here > amax)
 					amax = a_here;
@@ -230,12 +374,12 @@ void zipml_sgd::a_normalize(char toMinus1_1, char rowOrColumnWise) {
 			float arange = amax - amin;
 			if (arange > 0) {
 				if (toMinus1_1 == 1) {
-					for (int j = 0; j < numFeatures; j++) {
+					for (uint32_t j = 0; j < numFeatures; j++) {
 						a[i*numFeatures + j] = ((a[i*numFeatures + j] - amin)/arange)*2.0-1.0;
 					}
 				}
 				else {
-					for (int j = 0; j < numFeatures; j++) {
+					for (uint32_t j = 0; j < numFeatures; j++) {
 						a[i*numFeatures + j] = ((a[i*numFeatures + j] - amin)/arange);
 					}
 				}
@@ -243,10 +387,10 @@ void zipml_sgd::a_normalize(char toMinus1_1, char rowOrColumnWise) {
 		}
 	}
 	else {
-		for (int j = 1; j < numFeatures; j++) { // Don't normalize bias
+		for (uint32_t j = 1; j < numFeatures; j++) { // Don't normalize bias
 			float amin = numeric_limits<float>::max();
 			float amax = numeric_limits<float>::min();
-			for (int i = 0; i < numSamples; i++) {
+			for (uint32_t i = 0; i < numSamples; i++) {
 				float a_here = a[i*numFeatures + j];
 				if (a_here > amax)
 					amax = a_here;
@@ -256,12 +400,12 @@ void zipml_sgd::a_normalize(char toMinus1_1, char rowOrColumnWise) {
 			float arange = amax - amin;
 			if (arange > 0) {
 				if (toMinus1_1 == 1) {
-					for (int i = 0; i < numSamples; i++) {
+					for (uint32_t i = 0; i < numSamples; i++) {
 						a[i*numFeatures + j] = ((a[i*numFeatures + j] - amin)/arange)*2.0-1.0;
 					}
 				}
 				else {
-					for (int i = 0; i < numSamples; i++) {
+					for (uint32_t i = 0; i < numSamples; i++) {
 						a[i*numFeatures + j] = ((a[i*numFeatures + j] - amin)/arange);
 					}
 				}
@@ -275,7 +419,7 @@ void zipml_sgd::b_normalize(char toMinus1_1, char binarize_b, float b_toBinarize
 	if (binarize_b == 0) {
 		float bmin = numeric_limits<float>::max();
 		float bmax = numeric_limits<float>::min();
-		for (int i = 0; i < numSamples; i++) {
+		for (uint32_t i = 0; i < numSamples; i++) {
 			if (b[i] > bmax)
 				bmax = b[i];
 			if (b[i] < bmin)
@@ -285,13 +429,13 @@ void zipml_sgd::b_normalize(char toMinus1_1, char binarize_b, float b_toBinarize
 		float brange = bmax - bmin;
 		if (brange > 0) {
 			if (toMinus1_1 == 1) {
-				for (int i = 0; i < numSamples; i++) {
+				for (uint32_t i = 0; i < numSamples; i++) {
 					b[i] = ((b[i]-bmin)/brange)*2.0 - 1.0;
 					bi[i] = (int)(b[i]*(float)b_toIntegerScaler);
 				}
 			}
 			else {
-				for (int i = 0; i < numSamples; i++) {
+				for (uint32_t i = 0; i < numSamples; i++) {
 					b[i] = (b[i]-bmin)/brange;
 					bi[i] = (int)(b[i]*(float)b_toIntegerScaler);
 				}
@@ -301,7 +445,7 @@ void zipml_sgd::b_normalize(char toMinus1_1, char binarize_b, float b_toBinarize
 		b_range = brange;
 	}
 	else {
-		for (int i = 0; i < numSamples; i++) {
+		for (uint32_t i = 0; i < numSamples; i++) {
 			if(b[i] == b_toBinarizeTo)
 				b[i] = 1.0;
 			else
@@ -317,12 +461,12 @@ void zipml_sgd::b_normalize(char toMinus1_1, char binarize_b, float b_toBinarize
 uint32_t zipml_sgd::copy_data_into_FPGA_memory() {
 	uint32_t address32 = 0;
 	// Copy data to FPGA shared memory
-	for (int i = 0; i < numSamples; i++) {
-		for (int j = 0; j < numFeatures; j++) {
+	for (uint32_t i = 0; i < numSamples; i++) {
+		for (uint32_t j = 0; j < numFeatures; j++) {
 			interfaceFPGA->writeToMemoryFloat('i', a[i*numFeatures + j], address32);
 			address32++;
 		}
-		for (int k = 0; k < 15-numFeatures%16; k++) {
+		for (uint32_t k = 0; k < (numValuesPerLine-1)-numFeatures%numValuesPerLine; k++) {
 			interfaceFPGA->writeToMemoryFloat('i', 0, address32);
 			address32++;
 		}
@@ -330,7 +474,7 @@ uint32_t zipml_sgd::copy_data_into_FPGA_memory() {
 		address32++;
 	}
 	cout << "address32: " << address32 << endl;
-	uint32_t cacheLines = address32/16;
+	uint32_t cacheLines = address32/numValuesPerLine;
 	numCacheLines = cacheLines;
 	return cacheLines;
 }
@@ -349,9 +493,9 @@ uint32_t zipml_sgd::copy_data_into_FPGA_memory_after_quantization(int quantizati
 		quantize_data_integer(aiq1, quantizationBits);
 		quantize_data_integer(aiq2, quantizationBits);
 
-		for (int i = 0; i < numSamples; i++) {
+		for (uint32_t i = 0; i < numSamples; i++) {
 			uint32_t temp = 0;
-			for (int j = 0; j < numFeatures; j++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
 				int q1 = aiq1[i*numFeatures + j];
 				int q2 = aiq2[i*numFeatures + j];
 				
@@ -429,7 +573,7 @@ uint32_t zipml_sgd::copy_data_into_FPGA_memory_after_quantization(int quantizati
 				}
 			}
 			uint32_t address32untilNow = address32;
-			for (int k = 0; k < 15-address32untilNow%16; k++) {
+			for (uint32_t k = 0; k < 15-address32untilNow%16; k++) {
 				//interfaceFPGA->writeToMemory32('i', 0, address32);
 				address32++;
 				address2 += 16;
@@ -461,8 +605,8 @@ uint32_t zipml_sgd::get_number_of_CLs_needed_for_one_index(int quantizationBits)
 	uint32_t address4 = 0;
 	uint32_t address2 = 0;
 
-	for (int i = 0; i < numSamples; i++) {
-		for (int j = 0; j < numFeatures; j++) {
+	for (uint32_t i = 0; i < numSamples; i++) {
+		for (uint32_t j = 0; j < numFeatures; j++) {
 			if (quantizationBits == 1) {
 				address2++;
 				if (address2%16 == 0) {
@@ -517,7 +661,7 @@ uint32_t zipml_sgd::get_number_of_CLs_needed_for_one_index(int quantizationBits)
 			}
 		}
 		uint32_t address32untilNow = address32;
-		for (int k = 0; k < 15-address32untilNow%16; k++) {
+		for (uint32_t k = 0; k < 15-address32untilNow%16; k++) {
 			address32++;
 			address2 += 16;
 			address4 += 8;
@@ -539,8 +683,8 @@ void zipml_sgd::quantize_data_integer(int aiq[], uint32_t numBits) {
 	int numLevels = (1 << (numBits-1)) + 1;
 
 	if (a_normalizedToMinus1_1 == 0) {
-		for (int j = 0; j < numFeatures; j++) { // For every feature
-			for (int i = 0; i < numSamples; i++) { // For every sample
+		for (uint32_t j = 0; j < numFeatures; j++) { // For every feature
+			for (uint32_t i = 0; i < numSamples; i++) { // For every sample
 
 				float scaledElement = a[i*numFeatures+j]*(numLevels-1);
 				int baseLevel = (int)scaledElement;
@@ -557,8 +701,8 @@ void zipml_sgd::quantize_data_integer(int aiq[], uint32_t numBits) {
 		}
 	}
 	else {
-		for (int j = 0; j < numFeatures; j++) { // For every feature
-			for (int i = 0; i < numSamples; i++) { // For every sample
+		for (uint32_t j = 0; j < numFeatures; j++) { // For every feature
+			for (uint32_t i = 0; i < numSamples; i++) { // For every sample
 
 				float a_here = a[i*numFeatures + j];
 				if (a_here > 0) {
@@ -594,34 +738,70 @@ void zipml_sgd::quantize_data_integer(int aiq[], uint32_t numBits) {
 	}
 }
 
-// Provide: float x_history[numberOfIterations*numFeatures]
-void zipml_sgd::float_linreg_SGD(float x_history[], uint32_t numberOfIterations, float stepSize) {
-	float x[numFeatures];
-	for (int j = 0; j < numFeatures; j++) {
+// Provide: float x_history[numEpochs*numFeatures]
+void zipml_sgd::float_linreg_SGD(float x_history[], uint32_t numEpochs, float stepSize) {
+	// float x[numFeatures];
+	// for (uint32_t j = 0; j < numFeatures; j++) {
+	// 	x[j] = 0.0;
+	// }
+
+	// for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
+	// 	for (uint32_t i = 0; i < numSamples; i++) {
+	// 		float dot = 0;
+	// 		for (uint32_t j = 0; j < numFeatures; j++) {
+	// 			dot += x[j]*a[i*numFeatures + j];
+	// 		}
+	// 		for (uint32_t j = 0; j < numFeatures; j++) {
+	// 			x[j] -= stepSize*(dot - b[i])*a[i*numFeatures + j];
+	// 		}
+	// 	}
+	// 	for (uint32_t j = 0; j < numFeatures; j++) {
+	// 		x_history[epoch*numFeatures + j] = x[j];
+	// 	}
+	// 	cout << epoch << endl;
+	// }
+
+	uint32_t minibatchSize = 1;
+	float* x = (float*)malloc(numFeatures*sizeof(float));
+	float* gradient = (float*)malloc(numFeatures*sizeof(float));
+	for (uint32_t j = 0; j < numFeatures; j++) {
 		x[j] = 0.0;
+		gradient[j] = 0.0;
 	}
 
-	for(int epoch = 0; epoch < numberOfIterations; epoch++) {
-		for (int i = 0; i < numSamples; i++) {
+	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
+
+		for (uint32_t i = 0; i < numSamples; i++) {
 			float dot = 0;
-			for (int j = 0; j < numFeatures; j++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
 				dot += x[j]*a[i*numFeatures + j];
 			}
-			for (int j = 0; j < numFeatures; j++) {
-				x[j] -= stepSize*(dot - b[i])*a[i*numFeatures + j];
+			
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				gradient[j] += (dot - b[i])*a[i*numFeatures + j];
+			}
+		
+			if ((i+1)%minibatchSize == 0) {
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					x[j] -= stepSize*gradient[j];
+					gradient[j] = 0.0;
+				}
 			}
 		}
-		for (int j = 0; j < numFeatures; j++) {
+		for (uint32_t j = 0; j < numFeatures; j++) {
 			x_history[epoch*numFeatures + j] = x[j];
+			
 		}
 		cout << epoch << endl;
 	}
+	free(x);
+	free(gradient);
 }
 
-// Provide: float x_history[numberOfIterations*numFeatures]
-void zipml_sgd::Qfixed_linreg_SGD(float x_history[], uint32_t numberOfIterations, int stepSizeShifter, int quantizationBits) {
+// Provide: float x_history[numEpochs*numFeatures]
+void zipml_sgd::Qfixed_linreg_SGD(float x_history[], uint32_t numEpochs, int stepSizeShifter, int quantizationBits) {
 	int xi[numFeatures];
-	for (int j = 0; j < numFeatures; j++) {
+	for (uint32_t j = 0; j < numFeatures; j++) {
 		xi[j] = 0;
 	}
 
@@ -633,20 +813,20 @@ void zipml_sgd::Qfixed_linreg_SGD(float x_history[], uint32_t numberOfIterations
 
 	int* aiq1 = (int*)malloc(numSamples*numFeatures*sizeof(int));
 	int* aiq2 = (int*)malloc(numSamples*numFeatures*sizeof(int));
-	for(int epoch = 0; epoch < numberOfIterations; epoch++) {
+	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
 		quantize_data_integer(aiq1, quantizationBits);
 		quantize_data_integer(aiq2, quantizationBits);
 
-		for (int i = 0; i < numSamples; i++) {
+		for (uint32_t i = 0; i < numSamples; i++) {
 			int dot = 0;
-			for (int j = 0; j < numFeatures; j++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
 				dot += (xi[j]*aiq1[i*numFeatures + j]) >> numBitsToShift;
 			}
-			for (int j = 0; j < numFeatures; j++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
 				xi[j] -= ( ((dot - bi[i])*aiq2[i*numFeatures + j]) >> (stepSizeShifter + numBitsToShift) );
 			}
 		}
-		for (int j = 0; j < numFeatures; j++) {
+		for (uint32_t j = 0; j < numFeatures; j++) {
 			x_history[epoch*numFeatures + j] = ((float)xi[j]/(float)b_toIntegerScaler);
 		}
 		cout << epoch << endl;
@@ -656,10 +836,10 @@ void zipml_sgd::Qfixed_linreg_SGD(float x_history[], uint32_t numberOfIterations
 }
 
 // Provide: float x[numFeatures]
-void zipml_sgd::floatFSGD(float x[], uint32_t numberOfIterations, float stepSize, int binarize_b, float b_toBinarizeTo) {
+void zipml_sgd::floatFSGD(float x[], uint32_t numEpochs, float stepSize, int binarize_b, float b_toBinarizeTo) {
 	cout << "numCacheLines: " << numCacheLines << endl;
 
-	int minibatch_size = 36;
+	int minibatch_size = 0;
 
 	interfaceFPGA->m_AFUService->CSRWrite(CSR_READ_OFFSET, 0);
 	interfaceFPGA->m_AFUService->CSRWrite(CSR_WRITE_OFFSET, 0);
@@ -667,17 +847,18 @@ void zipml_sgd::floatFSGD(float x[], uint32_t numberOfIterations, float stepSize
 	uint32_t* b_to_binarize_toAddr = (uint32_t*) &b_toBinarizeTo;
 	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG5, *b_to_binarize_toAddr);
 	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG4, numSamples);
-	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG3, numberOfIterations << 18 /*Number of epochs*/ | numFeatures); // Samples
+	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG3, numEpochs << 18 | accumulationCount);
 	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG2, ((minibatch_size&0xFFFF) << 10) | (binarize_b << 1) );
 	uint32_t* stepSizeAddr = (uint32_t*) &stepSize;
 	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG1, *stepSizeAddr);
 
 	interfaceFPGA->doTransaction();
 
-	int numCLsForX = numFeatures/16 + 1;
+	int numCLsForX = accumulationCount;
+	cout << "numCLsForX: " << accumulationCount << endl;
 
-	uint32_t offset = (numberOfIterations-1)*numCLsForX*16;
-	for (int j = 0; j < numFeatures; j++) {
+	uint32_t offset = (numEpochs-1)*numCLsForX*numValuesPerLine;
+	for (uint32_t j = 0; j < numFeatures; j++) {
 		int32_t temp = interfaceFPGA->readFromMemory32('o', j + offset);
 		x[j] = (float)temp;
 		x[j] = x[j]/b_toIntegerScaler;
@@ -685,11 +866,11 @@ void zipml_sgd::floatFSGD(float x[], uint32_t numberOfIterations, float stepSize
 }
 
 // Provide: float x[numFeatures]
-void zipml_sgd::qFSGD(float x[], uint32_t numberOfIterations, int stepSizeShifter, int quantizationBits, int binarize_b, int bi_toBinarizeTo) {
+void zipml_sgd::qFSGD(float x[], uint32_t numEpochs, int stepSizeShifter, int quantizationBits, int binarize_b, int bi_toBinarizeTo) {
 	cout << "numCacheLines: " << numCacheLines << endl;
 	cout << "numberOfIndices: " << numberOfIndices << endl;
 
-	int minibatch_size = 16;
+	int minibatch_size = 1;
 	int stepSizeDeclineInterval = 128-1;
 
 	interfaceFPGA->m_AFUService->CSRWrite(CSR_READ_OFFSET, 0);
@@ -697,13 +878,13 @@ void zipml_sgd::qFSGD(float x[], uint32_t numberOfIterations, int stepSizeShifte
 	interfaceFPGA->m_AFUService->CSRWrite(CSR_NUM_LINES, numCacheLines);
 	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG5, bi_toBinarizeTo);
 	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG4, numSamples);
-	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG3, numberOfIterations << 18 /*Number of epochs*/ | numFeatures); // Samples
+	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG3, numEpochs << 18 | numFeatures); // Samples
 	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG2, ((minibatch_size&0xFFFF) << 10) | ((numberOfIndices&0xFF) << 2) | (binarize_b << 1) | a_normalizedToMinus1_1);
-	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG1, ((stepSizeDeclineInterval&0x3FFF) << 6) | stepSizeShifter&0x3F);
+	interfaceFPGA->m_AFUService->CSRWrite(CSR_MY_CONFIG1, ((stepSizeDeclineInterval&0x3FFF) << 6) | (stepSizeShifter&0x3F));
 
 	interfaceFPGA->doTransaction();
 
-	int numCLsForX = numFeatures/16 + 1;
+	int numCLsForX = accumulationCount;
 	if (quantizationBits == 1 && numCLsForX%16 != 0)
 		numCLsForX = numCLsForX + (16-numCLsForX%16);
 	else if (quantizationBits == 2 && numCLsForX%8 != 0)
@@ -713,8 +894,8 @@ void zipml_sgd::qFSGD(float x[], uint32_t numberOfIterations, int stepSizeShifte
 	else if (quantizationBits == 8 && numCLsForX%2 != 0)
 		numCLsForX = numCLsForX + 1;
 
-	uint32_t offset = (numberOfIterations-1)*numCLsForX*16;
-	for (int j = 0; j < numFeatures; j++) {
+	uint32_t offset = (numEpochs-1)*numCLsForX*16;
+	for (uint32_t j = 0; j < numFeatures; j++) {
 		int32_t temp = interfaceFPGA->readFromMemory32('o', j + offset);
 		x[j] = (float)temp;
 		x[j] = x[j]/b_toIntegerScaler;
@@ -723,9 +904,9 @@ void zipml_sgd::qFSGD(float x[], uint32_t numberOfIterations, int stepSizeShifte
 
 float zipml_sgd::calculate_loss(float x[]) {
 	float loss = 0;
-	for(int i = 0; i < numSamples; i++) {
+	for(uint32_t i = 0; i < numSamples; i++) {
 		float dot = 0.0;
-		for (int j = 0; j < numFeatures; j++) {
+		for (uint32_t j = 0; j < numFeatures; j++) {
 			dot += x[j]*a[i*numFeatures + j];
 		}
 		loss += (dot - b[i])*(dot - b[i]);
@@ -735,7 +916,7 @@ float zipml_sgd::calculate_loss(float x[]) {
 	return loss;
 }
 
-void zipml_sgd::log_history(char SWorFPGA, char fileOutput, int quantizationBits, float stepSize, int numberOfIterations, double time, float* x_history) {
+void zipml_sgd::log_history(char SWorFPGA, char fileOutput, int quantizationBits, float stepSize, int numEpochs, double time, float* x_history) {
 	char* fileName = (char*)malloc(200);
 	FILE* f;
 
@@ -743,7 +924,7 @@ void zipml_sgd::log_history(char SWorFPGA, char fileOutput, int quantizationBits
 
 	if (SWorFPGA == 's') {
 		if (fileOutput == 1) {
-			sprintf(fileName, "logs/SW_SGDhistory_%d_%d_%.6f_%d.log", numSamples, numFeatures, stepSize, numberOfIterations);
+			sprintf(fileName, "logs/SW_SGDhistory_%d_%d_%.6f_%d.log", numSamples, numFeatures, stepSize, numEpochs);
 			cout << "fileName:" << fileName << endl;
 			f = fopen(fileName, "w");
 			fprintf(f, "a_normalizedToMinus1_1\t%d\n", a_normalizedToMinus1_1);
@@ -751,14 +932,14 @@ void zipml_sgd::log_history(char SWorFPGA, char fileOutput, int quantizationBits
 			fprintf(f, "b_toIntegerScaler\t%x\n", b_toIntegerScaler);
 			fprintf(f, "numSamples\t%d\n", numSamples);
 			fprintf(f, "numFeatures\t%d\n", numFeatures);
-			fprintf(f, "numIterations\t%d\n", numberOfIterations);
+			fprintf(f, "numIterations\t%d\n", numEpochs);
 			fprintf(f, "stepSize\t%.10f\n", stepSize);
 			fprintf(f, "time\t%.10f\n", time);
 		}
 		
 		// Calculate initial loss
 		float x_zero[numFeatures];
-		for (int j = 0; j < numFeatures; j++) {
+		for (uint32_t j = 0; j < numFeatures; j++) {
 			x_zero[j] = 0.0;
 		}
 		float J0 = calculate_loss(x_zero);
@@ -766,9 +947,9 @@ void zipml_sgd::log_history(char SWorFPGA, char fileOutput, int quantizationBits
 		if (fileOutput == 1)
 			fprintf(f, "J\t%d\t%d\t%.10f\n", -1, 0, J0);
 
-		double epoch_time = time/numberOfIterations;
+		double epoch_time = time/numEpochs;
 
-		for(int epoch = 0; epoch < numberOfIterations; epoch++) {
+		for(int epoch = 0; epoch < numEpochs; epoch++) {
 			float J = calculate_loss(x_history + epoch*numFeatures);
 			cout << J << endl;
 			if (fileOutput == 1)
@@ -779,7 +960,7 @@ void zipml_sgd::log_history(char SWorFPGA, char fileOutput, int quantizationBits
 	}
 	else if (SWorFPGA == 'h') {
 		if (fileOutput == 1) {
-			sprintf(fileName, "logs/Q%dfixedSGDhistory_%d_%d_%.6f_%d.log", quantizationBits, numSamples, numFeatures, stepSize, numberOfIterations);
+			sprintf(fileName, "logs/Q%dfixedSGDhistory_%d_%d_%.6f_%d.log", quantizationBits, numSamples, numFeatures, stepSize, numEpochs);
 			cout << "fileName:" << fileName << endl;
 			f = fopen(fileName, "w");
 			fprintf(f, "numberOfIndices\t%d\n", numberOfIndices);
@@ -790,14 +971,12 @@ void zipml_sgd::log_history(char SWorFPGA, char fileOutput, int quantizationBits
 			fprintf(f, "quantizationBits\t%d\n", quantizationBits);
 			fprintf(f, "numSamples\t%d\n", numSamples);
 			fprintf(f, "numFeatures\t%d\n", numFeatures);
-			fprintf(f, "numIterations\t%d\n", numberOfIterations);
+			fprintf(f, "numIterations\t%d\n", numEpochs);
 			fprintf(f, "stepSize\t%.10f\n", stepSize);
 			fprintf(f, "time\t%.10f\n", time);
 		}
 
-		float x[numFeatures];
-
-		int numCLsForX = numFeatures/16 + 1;
+		int numCLsForX = accumulationCount;
 		if (quantizationBits == 1 && numCLsForX%16 != 0)
 			numCLsForX = numCLsForX + (16-numCLsForX%16);
 		else if (quantizationBits == 2 && numCLsForX%8 != 0)
@@ -811,7 +990,7 @@ void zipml_sgd::log_history(char SWorFPGA, char fileOutput, int quantizationBits
 
 		// Calculate initial loss
 		float x_zero[numFeatures];
-		for (int j = 0; j < numFeatures; j++) {
+		for (uint32_t j = 0; j < numFeatures; j++) {
 			x_zero[j] = 0.0;
 		}
 		float J0 = calculate_loss(x_zero);
@@ -819,12 +998,12 @@ void zipml_sgd::log_history(char SWorFPGA, char fileOutput, int quantizationBits
 		if (fileOutput == 1)
 			fprintf(f, "J\t%d\t%d\t%.10f\n", -1, 0, J0);
 
-		double epoch_time = time/numberOfIterations;
+		double epoch_time = time/numEpochs;
 
-		for(int epoch = 0; epoch < numberOfIterations; epoch++) {
+		for(int epoch = 0; epoch < numEpochs; epoch++) {
 			float x[numFeatures];
 			uint32_t offset = epoch*numCLsForX*16;
-			for (int j = 0; j < numFeatures; j++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
 				int32_t temp = interfaceFPGA->readFromMemory32('o', offset + j);
 				x[j] = (float)temp;
 				x[j] = x[j]/b_toIntegerScaler;
@@ -846,9 +1025,9 @@ void zipml_sgd::inference(float result[], float* x) {
 	//float result[numSamples];
 
 	int count_trues = 0;
-	for (int i = 0; i < numSamples; i++) {
+	for (uint32_t i = 0; i < numSamples; i++) {
 		float dot = 0;
-		for (int j = 0; j < numFeatures; j++) {
+		for (uint32_t j = 0; j < numFeatures; j++) {
 			dot += x[j]*a[i*numFeatures + j];
 		}
 		if (b_normalizedToMinus1_1 == 0) {
@@ -867,12 +1046,12 @@ void zipml_sgd::inference(float result[], float* x) {
 
 void zipml_sgd::multi_classification(float* xs[], uint32_t numClasses) {
 	int count_trues = 0;
-	for (int i = 0; i < numSamples; i++) {
+	for (uint32_t i = 0; i < numSamples; i++) {
 		float max = 0.0;
 		int matched_class = -1;
-		for (int c = 0; c < numClasses; c++) {
+		for (uint32_t c = 0; c < numClasses; c++) {
 			float dot = 0;
-			for (int j = 0; j < numFeatures; j++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
 				dot += xs[c][j]*a[i*numFeatures + j];
 			}
 			if (dot > max) {

@@ -22,80 +22,73 @@
 
 using namespace std;
 
+#define VALUE_TO_INT_SCALER 0x00800000
+#define NUM_VALUES_PER_LINE 16
+
 int main(int argc, char* argv[]) {
-	double start, end;
+
+	char* pathToDataset;
+	if (argc != 2) {
+		cout << "Usage: ./ZipML.exe <pathToDataset>" << endl;
+		return 0;
+	}
+	else {
+		pathToDataset = argv[1];
+	}
 
 	// Set parameters
-	int stepSizeShifter = 12;
-	int numberOfIterations = 10;
-	int quantizationBits = 1;
-	uint32_t value_to_integer_scaler = 0x00800000;
-	int numberOfIndices = numberOfIterations;
+	int stepSizeShifter = 9;
+	int numEpochs = 2;
+	int quantizationBits = 0;
+	int numberOfIndices = numEpochs;
 
 	// Instantiate
-	zipml_sgd app(1, value_to_integer_scaler);
+	zipml_sgd app(1, VALUE_TO_INT_SCALER, NUM_VALUES_PER_LINE);
 
 	// Load data
-	//app.load_tsv_data((char*)"./Datasets/synthetic/synth[m=10000][d=100][sigma=1][sparsity_fraction=0.1][mu_a=0][sigma_a=1]_sparse.tsv", 10000, 100);
-	//app.load_tsv_data((char*)"./Datasets/synthetic/synth[m=10000][d=1000][sigma=1][sparsity_fraction=0.1][mu_a=0][sigma_a=1]_sparse.tsv", 10000, 1000);
-	//app.load_libsvm_data((char*)"./Datasets/cadata", 20640, 8);
-	//app.load_libsvm_data((char*)"./Datasets/YearPredictionMSD", 463715, 90);
-	//app.load_libsvm_data((char*)"./Datasets/gisette_scale", 6000, 5000);
-	//app.load_libsvm_data((char*)"./Datasets/epsilon_normalized", 10000, 2000);
-	//app.load_libsvm_data((char*)"./Datasets/mnist", 60000, 780);
-	//app.load_libsvm_data((char*)"./Datasets/mnist", 100, 780);
-/*
+	// app.load_raw_data(pathToDataset, 10, 2048);
+	app.generate_synthetic_data(100, 370, 0);
+	
+	double start, end;
+
 	// Do normalization
-	app.a_normalize(0, 'r');
-	app.b_normalize(0, 1, 7.0);
-*/
-/*
-	// Print first 10 tuples
-	cout << "a: " << endl;
-	for (int i = 0; i < 10; i++) {
-		for (int j = 0; j < app.numFeatures; j++) {
-			cout << app.a[app.numFeatures*i + j] << " ";
-		}
-		cout << endl << endl;
-	}
-	cout << "b: " << endl;
-	for (int i = 0; i < 10; i++) {
-		cout << app.b[i] << endl;
-	}
-*/
-/*
+	// app.a_normalize(0, 'c');
+	// app.b_normalize(0, 0, 0.0);
+
+	app.print_samples(1);
+
 	// Full precision linear regression in SW
-	float x_history1[numberOfIterations*app.numFeatures];
+	float x_history1[numEpochs*app.numFeatures];
 	start = get_time();
-	app.float_linreg_SGD( x_history1, numberOfIterations, 1.0/(1 << stepSizeShifter) );
+	app.float_linreg_SGD( x_history1, numEpochs, 1.0/(1 << stepSizeShifter) );
 	end = get_time();
-	app.log_history('s', 0, quantizationBits, 1.0/(1 << stepSizeShifter), numberOfIterations, end-start, x_history1);
-*/
+	app.log_history('s', 0, quantizationBits, 1.0/(1 << stepSizeShifter), numEpochs, end-start, x_history1);
+
 /*
 	// Quantized linear regression in SW
-	float x_history2[numberOfIterations*app.numFeatures];
+	float x_history2[numEpochs*app.numFeatures];
 	start = get_time();
-	app.Qfixed_linreg_SGD( x_history2, numberOfIterations, stepSizeShifter, quantizationBits );
+	app.Qfixed_linreg_SGD( x_history2, numEpochs, stepSizeShifter, quantizationBits );
 	end = get_time();
-	app.log_history('s', 0, quantizationBits, 1.0/(1 << stepSizeShifter), numberOfIterations, end-start, x_history2);
+	app.log_history('s', 0, quantizationBits, 1.0/(1 << stepSizeShifter), numEpochs, end-start, x_history2);
 */
-/*
+
 	// Full precision linear regression on FPGA
-	float x1[numberOfIterations*app.numFeatures];
+	float x1[numEpochs*app.numFeatures];
 	app.numCacheLines = app.copy_data_into_FPGA_memory();
 	start = get_time();
-	app.floatFSGD( x1, numberOfIterations, 1.0/(1 << stepSizeShifter), 0, 0.0 );
+	app.floatFSGD( x1, numEpochs, 1.0/(1 << stepSizeShifter), 0, 0.0 );
 	end = get_time();
-	app.log_history('h', 0, quantizationBits, 1.0/(1 << stepSizeShifter), numberOfIterations, end-start, NULL);
-*/
+	app.log_history('h', 0, quantizationBits, 1.0/(1 << stepSizeShifter), numEpochs, end-start, NULL);
+
 /*
 	// Quantized linear regression on FPGA
-	float x2[numberOfIterations*app.numFeatures];
+	float x2[numEpochs*app.numFeatures];
 	app.numCacheLines = app.copy_data_into_FPGA_memory_after_quantization(quantizationBits, numberOfIndices, 0);
 	start = get_time();
-	app.qFSGD( x2, numberOfIterations, stepSizeShifter, quantizationBits, 0, 0.0);
+	app.qFSGD( x2, numEpochs, stepSizeShifter, quantizationBits, 0, 0.0);
 	end = get_time();
-	app.log_history('h', 0, quantizationBits, 1.0/(1 << stepSizeShifter), numberOfIterations, end-start, NULL);
+	app.log_history('h', 0, quantizationBits, 1.0/(1 << stepSizeShifter), numEpochs, end-start, NULL);
 */
 /*
 	// Multi-class training for MNIST
@@ -109,7 +102,7 @@ int main(int argc, char* argv[]) {
 	start = get_time();
 	for (int digit = 0; digit < 10; digit++) {
 		xs[digit] = (float*)malloc(app.numFeatures*sizeof(float));
-		app.qFSGD( xs[digit], numberOfIterations, stepSizeShifter, quantizationBits, 1, digit*value_to_integer_scaler);
+		app.qFSGD( xs[digit], numEpochs, stepSizeShifter, quantizationBits, 1, digit*value_to_integer_scaler);
 	}
 	end = get_time();
 	cout << "Total training time: " << end-start << endl;

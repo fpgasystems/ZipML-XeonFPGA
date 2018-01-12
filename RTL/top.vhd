@@ -204,7 +204,7 @@ port(
 	start_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	binarize_b_value : in std_logic;
 	b_value_to_binarize_to : in std_logic_vector(31 downto 0);
-	dimension : in std_logic_vector(17 downto 0);
+	accumulation_count : in std_logic_vector(17 downto 0);
 	number_of_samples : in std_logic_vector(31 downto 0);
 	number_of_CL_to_process : in std_logic_vector(31 downto 0));
 end component;
@@ -361,7 +361,7 @@ port map (
 	start_address => (others => '0'),
 	binarize_b_value => config2(1),
 	b_value_to_binarize_to => config5,
-	dimension => config3(17 downto 0),
+	accumulation_count => config3(17 downto 0),
 	number_of_samples => config4,
 	number_of_CL_to_process => number_of_CL_to_process);
 

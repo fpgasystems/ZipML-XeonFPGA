@@ -14,10 +14,9 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #*************************************************************************
 
-CPPFLAGS += -I./ -I/usr/local/include/
-CPPFLAGS += -march=native -mavx -D__AAL_USER__=1 -g -std=c++11 -O2 -O3
-LDFLAGS  += -L/usr/local/lib -Wl,-rpath-link -Wl,/usr/local/lib -Wl,-rpath -Wl,/usr/local/lib -L/usr/local/lib64 -Wl,-rpath-link -Wl,/usr/local/lib64 -Wl,-rpath -Wl,/usr/local/lib64
-LDFLAGS  += -lpthread -lOSAL -lAAS -lxlrt
+CPPFLAGS	= -O3 -std=c++11 -Wall -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function
+CXX			= g++
+LDFLAGS		= -lpthread -lOSAL -lAAS
 
-all:
-	g++ $(CPPFLAGS) main.cpp iFPGA.cpp RuntimeClient.cpp -o zipmlfpga $(LDFLAGS)
+all: main.cpp iFPGA.cpp RuntimeClient.cpp
+	$(CXX) -D HARPv1 -I$(AALSDK)/include $(CPPFLAGS) main.cpp iFPGA.cpp RuntimeClient.cpp -o zipmlfpga -L$(AALSDK)/lib $(LDFLAGS) -lxlrt
