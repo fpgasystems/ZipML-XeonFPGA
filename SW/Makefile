@@ -18,5 +18,13 @@ CPPFLAGS	= -O3 -std=c++11 -Wall -Wno-unused-variable -Wno-unused-but-set-variabl
 CXX			= g++
 LDFLAGS		= -lpthread -lOSAL -lAAS
 
-all: main.cpp iFPGA.cpp RuntimeClient.cpp
-	$(CXX) -D HARPv1 -I$(AALSDK)/include $(CPPFLAGS) main.cpp iFPGA.cpp RuntimeClient.cpp -o zipmlfpga -L$(AALSDK)/lib $(LDFLAGS) -lxlrt
+all: scd_test sgd_test zipml
+
+scd_test: ./tests/scd_test.cpp ./src/scd.h
+	$(CXX) -D HARPv1 -I$(AALSDK)/include $(CPPFLAGS) ./tests/scd_test.cpp -o scd_test -L$(AALSDK)/lib $(LDFLAGS) -lxlrt
+
+sgd_test: ./tests/sgd_test.cpp ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp ./src/zipml_sgd.h
+	$(CXX) -D HARPv1 -I$(AALSDK)/include $(CPPFLAGS) ./tests/sgd_test.cpp ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp -o sgd_test -L$(AALSDK)/lib $(LDFLAGS) -lxlrt
+
+zipml: ./tests/main.cpp ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp
+	$(CXX) -D HARPv1 -I$(AALSDK)/include $(CPPFLAGS) ./tests/main.cpp ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp -o zipmlfpga -L$(AALSDK)/lib $(LDFLAGS) -lxlrt

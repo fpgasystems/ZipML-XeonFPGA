@@ -18,7 +18,7 @@
 #include <stdint.h>
 #include <pthread.h>
 
-#include "zipml_sgd.h"
+#include "../src/zipml_sgd.h"
 
 using namespace std;
 
@@ -60,7 +60,7 @@ int main(int argc, char* argv[]) {
 	// Full precision linear regression in SW
 	float x_history1[numEpochs*app.numFeatures];
 	start = get_time();
-	app.float_linreg_SGD( x_history1, numEpochs, 1.0/(1 << stepSizeShifter) );
+	app.float_linreg_SGD( x_history1, numEpochs, 1, 1.0/(1 << stepSizeShifter) );
 	end = get_time();
 	app.log_history('s', 0, quantizationBits, 1.0/(1 << stepSizeShifter), numEpochs, end-start, x_history1);
 

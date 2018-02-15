@@ -26,7 +26,7 @@
 #include <limits>
 #include <cmath>
 
-#include "iFPGA.h"
+#include "../driver/iFPGA.h"
 
 using namespace std;
 
@@ -49,7 +49,7 @@ public:
 	uint32_t accumulationCount;
 
 	char gotFPGA;
-	RuntimeClient runtimeClient;
+	RuntimeClient* runtimeClient;
 	iFPGA* interfaceFPGA;
 	uint32_t numCacheLines;
 
@@ -94,7 +94,7 @@ public:
 	void quantize_data_integer(int aiq[], uint32_t numBits);
 
 	// Linear Regression
-	void float_linreg_SGD(float x_history[], uint32_t numEpochs, float stepSize);
+	void float_linreg_SGD(float x_history[], uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
 	void Qfixed_linreg_SGD(float x_history[], uint32_t numEpochs, int stepSizeShifter, int quantizationBits);
 
 	// FPGA-based SGD (solves either linear regression of L2 SVM, depending on what is loaded)
@@ -127,8 +127,9 @@ zipml_sgd::zipml_sgd(char getFPGA, uint32_t _b_toIntegerScaler, uint32_t _numVal
 	b_toIntegerScaler = _b_toIntegerScaler;
 
 	if (getFPGA == 1) {
-		interfaceFPGA = new iFPGA(&runtimeClient, pages_to_allocate, page_size_in_cache_lines);
-		if(!runtimeClient.isOK()){
+		runtimeClient = new RuntimeClient();
+		interfaceFPGA = new iFPGA(runtimeClient, pages_to_allocate, page_size_in_cache_lines);
+		if(!runtimeClient->isOK()){
 			cout << "FPGA runtime failed to start" << endl;
 			exit(1);
 		}
@@ -139,8 +140,10 @@ zipml_sgd::zipml_sgd(char getFPGA, uint32_t _b_toIntegerScaler, uint32_t _numVal
 }
 
 zipml_sgd::~zipml_sgd() {
-	if (gotFPGA == 1)
+	if (gotFPGA == 1) {
+		delete runtimeClient;
 		delete interfaceFPGA;
+	}
 
 	if (a != NULL)
 		free(a);
@@ -739,7 +742,7 @@ void zipml_sgd::quantize_data_integer(int aiq[], uint32_t numBits) {
 }
 
 // Provide: float x_history[numEpochs*numFeatures]
-void zipml_sgd::float_linreg_SGD(float x_history[], uint32_t numEpochs, float stepSize) {
+void zipml_sgd::float_linreg_SGD(float x_history[], uint32_t numEpochs, uint32_t minibatchSize, float stepSize) {
 	// float x[numFeatures];
 	// for (uint32_t j = 0; j < numFeatures; j++) {
 	// 	x[j] = 0.0;
@@ -761,13 +764,10 @@ void zipml_sgd::float_linreg_SGD(float x_history[], uint32_t numEpochs, float st
 	// 	cout << epoch << endl;
 	// }
 
-	uint32_t minibatchSize = 1;
-	float* x = (float*)malloc(numFeatures*sizeof(float));
-	float* gradient = (float*)malloc(numFeatures*sizeof(float));
-	for (uint32_t j = 0; j < numFeatures; j++) {
-		x[j] = 0.0;
-		gradient[j] = 0.0;
-	}
+	float* x = (float*)calloc(numFeatures, sizeof(float));
+	float* gradient = (float*)calloc(numFeatures, sizeof(float));
+	
+	cout << "Initial loss: " << calculate_loss(x) << endl;
 
 	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
 
@@ -788,10 +788,14 @@ void zipml_sgd::float_linreg_SGD(float x_history[], uint32_t numEpochs, float st
 				}
 			}
 		}
-		for (uint32_t j = 0; j < numFeatures; j++) {
-			x_history[epoch*numFeatures + j] = x[j];
-			
+		if (x_history != NULL) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_history[epoch*numFeatures + j] = x[j];
+			}
 		}
+		else
+			cout << "Loss " << epoch << ": " << calculate_loss(x) << endl;
+
 		cout << epoch << endl;
 	}
 	free(x);
