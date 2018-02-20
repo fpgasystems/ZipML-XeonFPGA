@@ -46,19 +46,24 @@ int main(int argc, char* argv[]) {
 	// Do SCD
 	scd scd_app(VALUE_TO_INT_SCALER);
 
-	scd_app.load_libsvm_data(pathToDataset, numSamples, numFeatures);
+	// scd_app.load_libsvm_data(pathToDataset, numSamples, numFeatures);
+	// scd_app.a_normalize(0, 'c');
+	// scd_app.b_normalize(0, 0, 0.0);
 
-	scd_app.a_normalize(0, 'c');
-	scd_app.b_normalize(0, 0, 0.0);
+	scd_app.generate_synthetic_data(numSamples, numFeatures, 0);
 
 	scd_app.print_samples(1);
 
-	for (uint32_t i = 1; i < 10; i++) {
-		cout << scd_app.a[1][i] << endl;
-		cout << (int)(scd_app.a[1][i]*VALUE_TO_INT_SCALER) << endl;
-		cout << "delta: " << (int)(scd_app.a[1][i]*VALUE_TO_INT_SCALER) - (int)(scd_app.a[1][i-1]*VALUE_TO_INT_SCALER) << endl;
-	}
+	// for (uint32_t i = 1; i < 10; i++) {
+	// 	cout << scd_app.a[1][i] << endl;
+	// 	cout << (int)(scd_app.a[1][i]*VALUE_TO_INT_SCALER) << endl;
+	// 	cout << "delta: " << (int)(scd_app.a[1][i]*VALUE_TO_INT_SCALER) - (int)(scd_app.a[1][i-1]*VALUE_TO_INT_SCALER) << endl;
+	// }
 
 	// scd_app.float_linreg_SCD(NULL, numEpochs, numSamples, 1.0/(1 << stepSizeShifter));
 	// scd_app.float_linreg_SCD(NULL, numEpochs, 256, 1.0/(1 << stepSizeShifter));
+
+	scd_app.AVX_float_linreg_SCD(NULL, numEpochs, 256, 1.0/(1 << stepSizeShifter));
+
+	scd_app.AVXmulti_float_linreg_SCD(NULL, numEpochs, 256, 1.0/(1 << stepSizeShifter));
 }
