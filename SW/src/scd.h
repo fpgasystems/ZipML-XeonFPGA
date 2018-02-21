@@ -12,7 +12,9 @@
 
 #include "../driver/iFPGA.h"
 
+#ifdef AVX2
 #include "immintrin.h"
+#endif
 
 using namespace std;
 
@@ -73,9 +75,12 @@ public:
 
 	float calculate_loss(float* x);
 
+	void float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
 	void float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
+#ifdef AVX2
 	void AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
 	void AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
+#endif
 };
 
 
@@ -291,13 +296,11 @@ static void shuffle(uint32_t* indexes, uint32_t size) {
 	}
 }
 
-void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize) {
+void scd::float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize) {
 	float* x = (float*)aligned_alloc(64, numFeatures*sizeof(float));
 	memset(x, 0, numFeatures*sizeof(float));
-	float* error = (float*)aligned_alloc(64, numSamples*sizeof(float));
-	memset(error, 0, numSamples*sizeof(float));
-	float* inference = (float*)aligned_alloc(64, numSamples*sizeof(float));
-	memset(inference, 0, numSamples*sizeof(float));
+	float* gradient = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(gradient, 0, numFeatures*sizeof(float));
 
 	cout << "Initial loss: " << calculate_loss(x) << endl;
 
@@ -312,31 +315,34 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 		for (uint32_t m = 0; m < numMinibatches; m++) {
 			for (uint32_t i = 0; i < minibatchSize; i++) {
-				error[m*minibatchSize + i] = inference[m*minibatchSize + i] - b[m*minibatchSize + i];
-				inference[m*minibatchSize + i] = 0.0;
-			}
-			for (uint32_t j = 0; j < numFeatures; j++) {
-				float gradient = 0;
-				for (uint32_t i = 0; i < minibatchSize; i++) {
-					gradient += a[j][m*minibatchSize + i]*error[m*minibatchSize + i];
-					inference[m*minibatchSize + i] += a[j][m*minibatchSize + i]*x[j];
+				float dot = 0;
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					dot += x[j]*a[j][m*minibatchSize + i];
 				}
-				x[j] -= stepSize*gradient;
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					gradient[j] += (dot - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
+				}
+			}
+			// cout << "gradient[0]: " << gradient[0] << endl;
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x[j] -= stepSize*(gradient[j]/minibatchSize);
+				gradient[j] = 0.0;
 			}
 		}
 		// Handle the rest
 		if (rest > 0) {
 			for (uint32_t i = numSamples-rest; i < numSamples; i++) {
-				error[i] = inference[i] - b[i];
-				inference[i] = 0.0;
+				float dot = 0;
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					dot += x[j]*a[j][i];
+				}
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					gradient[j] += (dot - b[i])*a[j][i];
+				}
 			}
 			for (uint32_t j = 0; j < numFeatures; j++) {
-				float gradient = 0;
-				for (uint32_t i = numSamples-rest; i < numSamples; i++) {
-					gradient += a[j][i]*error[i];
-					inference[i] += a[j][i]*x[j];
-				}
-				x[j] -= stepSize*gradient;
+				x[j] -= stepSize*gradient[j];
+				gradient[j] = 0.0;
 			}
 		}
 
@@ -355,10 +361,74 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 	}
 
 	free(x);
-	free(error);
-	free(inference);
+	free(gradient);
 }
 
+void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize) {
+	float* residual = (float*)aligned_alloc(64, numSamples*sizeof(float));
+	memset(residual, 0, numSamples*sizeof(float));	
+
+	uint32_t numMinibatches = numSamples/minibatchSize;
+	cout << "numMinibatches: " << numMinibatches << endl;
+	uint32_t rest = numSamples - numMinibatches*minibatchSize;
+	cout << "rest: " << rest << endl;
+
+	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+
+	cout << "Initial loss: " << calculate_loss(x) << endl;
+
+	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
+
+		double start = get_time();
+
+		for (uint32_t m = 0; m < numMinibatches; m++) {
+			
+			for (uint32_t j = 0; j < numFeatures; j++) {
+
+				float gradient = 0;
+				for (uint32_t i = 0; i < minibatchSize; i++) {
+					gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
+				}
+				float step = stepSize*(gradient/minibatchSize);
+
+				x[m*numFeatures + j] -= step;
+
+				for (uint32_t i = 0; i < minibatchSize; i++) {
+					residual[m*minibatchSize + i] -= step*a[j][m*minibatchSize + i];
+				}
+
+			}
+		}
+
+		for (uint32_t m = 1; m < numMinibatches; m++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x[j] += x[m*numFeatures + j];
+			}
+		}
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			x[j] = x[j]/numMinibatches;
+		}
+
+		double end = get_time();
+		cout << "Time for one epoch: " << end-start << endl;
+
+		if (x_history != NULL) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_history[epoch*numFeatures + j] = x[j];
+			}
+		}
+		else
+			cout << "Loss " << epoch << ": " << calculate_loss(x) << endl;
+
+		cout << epoch << endl;
+	}
+
+	free(x);
+	free(residual);
+}
+
+#ifdef AVX2
 void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize) {
 	if (minibatchSize%8 == 8) {
 		cout << "For AVX minibatchSize%8 must be 0!" << endl;
@@ -658,7 +728,7 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32
 		free(inference[n]);
 	}
 }
-
+#endif
 
 float scd::calculate_loss(float* x) {
 	float loss = 0;

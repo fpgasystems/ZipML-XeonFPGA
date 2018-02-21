@@ -40,19 +40,30 @@ int main(int argc, char* argv[]) {
 		numFeatures = atoi(argv[3]);
 	}
 
-	uint32_t stepSizeShifter = 24;
+	uint32_t stepSizeShifter = 3;
 	uint32_t numEpochs = 10;
 
 	// Do SCD
 	scd scd_app(VALUE_TO_INT_SCALER);
 
-	// scd_app.load_libsvm_data(pathToDataset, numSamples, numFeatures);
-	// scd_app.a_normalize(0, 'c');
-	// scd_app.b_normalize(0, 0, 0.0);
+	scd_app.load_libsvm_data(pathToDataset, numSamples, numFeatures);
+	scd_app.a_normalize(0, 'c');
+	scd_app.b_normalize(0, 0, 0.0);
 
-	scd_app.generate_synthetic_data(numSamples, numFeatures, 0);
+	// scd_app.generate_synthetic_data(numSamples, numFeatures, 0);
 
 	scd_app.print_samples(1);
+
+	// scd_app.float_linreg_SGD(NULL, numEpochs, numSamples, 1.0/(1 << stepSizeShifter));
+	scd_app.float_linreg_SGD(NULL, numEpochs, 100, 1.0/(1 << 12));
+
+	scd_app.float_linreg_SCD(NULL, numEpochs, numSamples, 1.0/(1 << stepSizeShifter));
+	scd_app.float_linreg_SCD(NULL, numEpochs, 100, 1.0/(1 << stepSizeShifter));
+
+	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, 256, 1.0/(1 << stepSizeShifter));
+	// scd_app.AVXmulti_float_linreg_SCD(NULL, numEpochs, 256, 1.0/(1 << stepSizeShifter));
+
+
 
 	// for (uint32_t i = 1; i < 10; i++) {
 	// 	cout << scd_app.a[1][i] << endl;
@@ -60,10 +71,18 @@ int main(int argc, char* argv[]) {
 	// 	cout << "delta: " << (int)(scd_app.a[1][i]*VALUE_TO_INT_SCALER) - (int)(scd_app.a[1][i-1]*VALUE_TO_INT_SCALER) << endl;
 	// }
 
-	// scd_app.float_linreg_SCD(NULL, numEpochs, numSamples, 1.0/(1 << stepSizeShifter));
-	// scd_app.float_linreg_SCD(NULL, numEpochs, 256, 1.0/(1 << stepSizeShifter));
-
-	scd_app.AVX_float_linreg_SCD(NULL, numEpochs, 256, 1.0/(1 << stepSizeShifter));
-
-	scd_app.AVXmulti_float_linreg_SCD(NULL, numEpochs, 256, 1.0/(1 << stepSizeShifter));
+	// ofstream f1("features.dat");
+	// f1 << scd_app.numSamples << " " << scd_app.numFeatures << endl;
+	// for (uint32_t i = 0; i < scd_app.numSamples; i++) {
+	// 	for (uint32_t j = 0; j < scd_app.numFeatures; j++) {
+	// 		f1 << j << " " << scd_app.a[j][i] << " ";
+	// 	}
+	// 	f1 << endl;
+	// }
+	// f1.close();
+	// ofstream f2("labels.dat");
+	// for (uint32_t i = 0; i < scd_app.numSamples; i++) {
+	// 	f2 << scd_app.b[i] << endl;
+	// }
+	// f2.close();
 }
