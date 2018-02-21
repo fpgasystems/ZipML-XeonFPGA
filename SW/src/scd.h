@@ -366,7 +366,7 @@ void scd::float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize) {
 	float* residual = (float*)aligned_alloc(64, numSamples*sizeof(float));
-	memset(residual, 0, numSamples*sizeof(float));	
+	memset(residual, 0, numSamples*sizeof(float));
 
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
@@ -435,82 +435,78 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 		exit(1);
 	}
 
-	float* x = (float*)aligned_alloc(64, numFeatures*sizeof(float));
-	memset(x, 0, numFeatures*sizeof(float));
-	float* error = (float*)aligned_alloc(64, numSamples*sizeof(float));
-	memset(error, 0, numSamples*sizeof(float));
-	float* inference = (float*)aligned_alloc(64, numSamples*sizeof(float));
-	memset(inference, 0, numSamples*sizeof(float));
-	
-	cout << "Initial loss: " << calculate_loss(x) << endl;
+	float scaledStepSize = -stepSize/(float)minibatchSize;
+	__m256 scaledStepSize_temp = _mm256_set1_ps(scaledStepSize);
+
+	float* residual = (float*)aligned_alloc(64, numSamples*sizeof(float));
+	memset(residual, 0, numSamples*sizeof(float));
 
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
 	cout << "rest: " << rest << endl;
 
+	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+
+	cout << "Initial loss: " << calculate_loss(x) << endl;
+
 	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
 
 		double start = get_time();
 
-		__m256 error_temp;
-		__m256 inference_temp;
+		__m256 residual_temp;
+		__m256 a_temp;
 		__m256 b_temp;
 
 		for (uint32_t m = 0; m < numMinibatches; m++) {
-			for (uint32_t i = 0; i < minibatchSize; i+=8) {
-				b_temp = _mm256_load_ps(b + m*minibatchSize + i);
-				error_temp = _mm256_load_ps(error + m*minibatchSize + i);
-				inference_temp = _mm256_load_ps(inference + m*minibatchSize + i);
-
-				error_temp = _mm256_sub_ps(inference_temp, b_temp);
-				inference_temp = _mm256_setzero_ps();
-
-				_mm256_store_ps(error + m*minibatchSize + i, error_temp);
-				_mm256_store_ps(inference + m*minibatchSize + i, inference_temp);
-			}
 			
 			for (uint32_t j = 0; j < numFeatures; j++) {
 				__m256 gradient = _mm256_setzero_ps();
-				__m256 x_temp = _mm256_set1_ps(x[j]);
-				__m256 a_temp;
 
 				for (uint32_t i = 0; i < minibatchSize; i+=8) {
 					a_temp = _mm256_load_ps(a[j] + m*minibatchSize + i);
-					error_temp = _mm256_load_ps(error + m*minibatchSize + i);
-					inference_temp = _mm256_load_ps(inference + m*minibatchSize + i);
+					b_temp = _mm256_load_ps(b + m*minibatchSize + i);
+					residual_temp = _mm256_load_ps(residual + m*minibatchSize + i);
 
+					__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
 					gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
-					inference_temp = _mm256_fmadd_ps(a_temp, x_temp, inference_temp);
-
-					_mm256_store_ps(inference + m*minibatchSize + i, inference_temp);
 				}
-				float gradient_reduce[8];
-				_mm256_store_ps(gradient_reduce, gradient);
-				x[j] -= stepSize*(	gradient_reduce[0] + 
-									gradient_reduce[1] + 
-									gradient_reduce[2] + 
-									gradient_reduce[3] + 
-									gradient_reduce[4] + 
-									gradient_reduce[5] + 
-									gradient_reduce[6] + 
-									gradient_reduce[7]);
+				__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
+
+				float stepReduce[8];
+				_mm256_store_ps(stepReduce, step);
+				stepReduce[0] = (stepReduce[0] + 
+								stepReduce[1] + 
+								stepReduce[2] + 
+								stepReduce[3] + 
+								stepReduce[4] + 
+								stepReduce[5] + 
+								stepReduce[6] + 
+								stepReduce[7]);
+
+
+				__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
+
+				x[m*numFeatures + j] += stepReduce[0];
+
+				for (uint32_t i = 0; i < minibatchSize; i+=8) {
+					a_temp = _mm256_load_ps(a[j] + m*minibatchSize + i);
+					residual_temp = _mm256_load_ps(residual + m*minibatchSize + i);
+					residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
+
+					_mm256_store_ps(residual + m*minibatchSize + i, residual_temp);
+				}
 			}
 		}
-		// Handle the rest
-		if (rest > 0) {
-			for (uint32_t i = numSamples-rest; i < numSamples; i++) {
-				error[i] = inference[i] - b[i];
-				inference[i] = 0.0;
-			}
+
+		for (uint32_t m = 1; m < numMinibatches; m++) {
 			for (uint32_t j = 0; j < numFeatures; j++) {
-				float gradient = 0;
-				for (uint32_t i = numSamples-rest; i < numSamples; i++) {
-					gradient += a[j][i]*error[i];
-					inference[i] += a[j][i]*x[j];
-				}
-				x[j] -= stepSize*gradient;
+				x[j] += x[m*numFeatures + j];
 			}
+		}
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			x[j] = x[j]/numMinibatches;
 		}
 
 		double end = get_time();
@@ -528,8 +524,7 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 	}
 
 	free(x);
-	free(error);
-	free(inference);
+	free(residual);
 }
 
 typedef struct {
@@ -538,106 +533,86 @@ typedef struct {
 	float* x;
 	float** a;
 	float* b;
-	float* error;
-	float** inference;
+	float* residual;
 	float stepSize;
-	uint32_t startingCoord;
-	uint32_t numCoordsToProcess;
+	uint32_t startingBatch;
+	uint32_t numBatchesToProcess;
 	uint32_t minibatchSize;
 	uint32_t numMinibatches;
-	uint32_t rest;
 	uint32_t numEpochs;
 	uint32_t numFeatures;
 	uint32_t numSamples;
 	float* x_history;
 	scd* app;
-} coordinate_thread_data;
+} batch_thread_data;
 
-void* coordinate_thread(void* args) {
-	coordinate_thread_data* r = (coordinate_thread_data*)args;
+void* batch_thread(void* args) {
+	batch_thread_data* r = (batch_thread_data*)args;
+
+	float scaledStepSize = -r->stepSize/(float)r->minibatchSize;
+	__m256 scaledStepSize_temp = _mm256_set1_ps(scaledStepSize);
 
 	double start, end;
 
-	float* inference_reduce;
-	if (r->tid == 0) {
-		inference_reduce = (float*)aligned_alloc(64, r->numSamples*sizeof(float));
-		memset(inference_reduce, 0, r->numSamples*sizeof(float));
-	}
-
 	for(uint32_t epoch = 0; epoch < r->numEpochs; epoch++) {
 
-		start = get_time();
+		pthread_barrier_wait(r->barrier);
+		double start = get_time();
 
+		__m256 residual_temp;
 		__m256 a_temp;
 		__m256 b_temp;
-		__m256 error_temp;
-		__m256 inference_temp;
 
-		for (uint32_t m = 0; m < r->numMinibatches; m++) {
-			if (r->tid == 0) {
-				for (uint32_t i = 0; i < r->minibatchSize; i++) {
-					for (uint32_t n = 0; n < NUM_THREADS; n++) {
-						inference_reduce[m*r->minibatchSize + i] += r->inference[n][m*r->minibatchSize + i];
-						r->inference[n][m*r->minibatchSize + i] = 0;
-					}
-				}
-				for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
-					b_temp = _mm256_load_ps(r->b + m*r->minibatchSize + i);
-					error_temp = _mm256_load_ps(r->error + m*r->minibatchSize + i);
-					inference_temp = _mm256_load_ps(inference_reduce + m*r->minibatchSize + i);
-
-					error_temp = _mm256_sub_ps(inference_temp, b_temp);
-					inference_temp = _mm256_setzero_ps();
-
-					_mm256_store_ps(r->error + m*r->minibatchSize + i, error_temp);
-					_mm256_store_ps(inference_reduce + m*r->minibatchSize + i, inference_temp);
-				}
-			}
-			pthread_barrier_wait(r->barrier);
-
-			for (uint32_t j = r->startingCoord; j < r->startingCoord+r->numCoordsToProcess; j++) {
+		for (uint32_t m = r->startingBatch; m < r->startingBatch + r->numBatchesToProcess; m++) {
+			for (uint32_t j = 0; j < r->numFeatures; j++) {
 				__m256 gradient = _mm256_setzero_ps();
-				__m256 x_temp = _mm256_set1_ps(r->x[j]);
 
 				for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
 					a_temp = _mm256_load_ps(r->a[j] + m*r->minibatchSize + i);
-					error_temp = _mm256_load_ps(r->error + m*r->minibatchSize + i);
-					inference_temp = _mm256_load_ps(r->inference[r->tid] + m*r->minibatchSize + i);
+					b_temp = _mm256_load_ps(r->b + m*r->minibatchSize + i);
+					residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
 
+					__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
 					gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
-					inference_temp = _mm256_fmadd_ps(a_temp, x_temp, inference_temp);
-
-					_mm256_store_ps(r->inference[r->tid] + m*r->minibatchSize + i, inference_temp);
 				}
-				float gradient_reduce[8];
-				_mm256_store_ps(gradient_reduce, gradient);
-				r->x[j] -= r->stepSize*(	gradient_reduce[0] + 
-											gradient_reduce[1] + 
-											gradient_reduce[2] + 
-											gradient_reduce[3] + 
-											gradient_reduce[4] + 
-											gradient_reduce[5] + 
-											gradient_reduce[6] + 
-											gradient_reduce[7]);
+				__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
+
+				float stepReduce[8];
+				_mm256_store_ps(stepReduce, step);
+				stepReduce[0] = (stepReduce[0] + 
+								stepReduce[1] + 
+								stepReduce[2] + 
+								stepReduce[3] + 
+								stepReduce[4] + 
+								stepReduce[5] + 
+								stepReduce[6] + 
+								stepReduce[7]);
+
+
+				__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
+
+				r->x[m*r->numFeatures + j] += stepReduce[0];
+
+				for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
+					a_temp = _mm256_load_ps(r->a[j] + m*r->minibatchSize + i);
+					residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
+					residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
+
+					_mm256_store_ps(r->residual + m*r->minibatchSize + i, residual_temp);
+				}
 			}
-			pthread_barrier_wait(r->barrier);
 		}
 
+		pthread_barrier_wait(r->barrier);
+
 		if (r->tid == 0) {
-			// Handle the rest
-			if (r->rest > 0) {
-				for (uint32_t i = r->numSamples-r->rest; i < r->numSamples; i++) {
-					r->error[i] = inference_reduce[i] - r->b[i];
-					inference_reduce[i] = 0.0;
-				}
+			for (uint32_t m = 1; m < r->numMinibatches; m++) {
 				for (uint32_t j = 0; j < r->numFeatures; j++) {
-					float gradient = 0;
-					for (uint32_t i = r->numSamples-r->rest; i < r->numSamples; i++) {
-						gradient += r->a[j][i]*r->error[i];
-						inference_reduce[i] += r->a[j][i]*r->x[j];
-					}
-					r->x[j] -= r->stepSize*gradient;
+					r->x[j] += r->x[m*r->numFeatures + j];
 				}
+			}
+			for (uint32_t j = 0; j < r->numFeatures; j++) {
+				r->x[j] = r->x[j]/r->numMinibatches;
 			}
 
 			end = get_time();
@@ -666,26 +641,23 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32
 	pthread_barrier_t barrier;
 	pthread_attr_t attr;
 	pthread_t threads[NUM_THREADS];
-	coordinate_thread_data args[NUM_THREADS];
+	batch_thread_data args[NUM_THREADS];
 	cpu_set_t set;
 
-	float* x = (float*)aligned_alloc(64, numFeatures*sizeof(float));
-	memset(x, 0, numFeatures*sizeof(float));
-	float* error = (float*)aligned_alloc(64, numSamples*sizeof(float));
-	memset(error, 0, numSamples*sizeof(float));
-	float* inference[NUM_THREADS];
-	for (uint32_t n = 0; n < NUM_THREADS; n++) {
-		inference[n] = (float*)aligned_alloc(64, numSamples*sizeof(float));
-		memset(inference[n], 0, numSamples*sizeof(float));
-	}
-	
-	cout << "Initial loss: " << calculate_loss(x) << endl;
+	float* residual = (float*)aligned_alloc(64, numSamples*sizeof(float));
+	memset(residual, 0, numSamples*sizeof(float));
+
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
 	cout << "rest: " << rest << endl;
 
-	uint32_t startingCoord = 0;
+	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+
+	cout << "Initial loss: " << calculate_loss(x) << endl;
+
+	uint32_t startingBatch = 0;
 	pthread_barrier_init(&barrier, NULL, NUM_THREADS);
 	pthread_attr_init(&attr);
 	CPU_ZERO(&set);
@@ -698,35 +670,30 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32
 		args[n].x = x;
 		args[n].a = a;
 		args[n].b = b;
-		args[n].error = error;
-		args[n].inference = inference;
+		args[n].residual = residual;
 		args[n].stepSize = stepSize;
-		args[n].startingCoord = startingCoord;
+		args[n].startingBatch = startingBatch;
 		if (n == NUM_THREADS-1)
-			args[n].numCoordsToProcess = numFeatures - startingCoord;
+			args[n].numBatchesToProcess = numMinibatches - startingBatch;
 		else
-			args[n].numCoordsToProcess = numFeatures/NUM_THREADS;
+			args[n].numBatchesToProcess = numMinibatches/NUM_THREADS;
 		args[n].minibatchSize = minibatchSize;
 		args[n].numMinibatches = numMinibatches;
-		args[n].rest = rest;
 		args[n].numEpochs = numEpochs;
 		args[n].numFeatures = numFeatures;
 		args[n].numSamples = numSamples;
 		args[n].x_history = x_history;
 		args[n].app = this;
 
-		pthread_create(&threads[n], &attr, coordinate_thread, (void*)&args[n]);
-		startingCoord += args[n].numCoordsToProcess;
+		pthread_create(&threads[n], &attr, batch_thread, (void*)&args[n]);
+		startingBatch += args[n].numBatchesToProcess;
 	}
 	for (uint32_t n = 0; n < NUM_THREADS; n++) {
 		pthread_join(threads[n], NULL);
 	}	
 
 	free(x);
-	free(error);
-	for (uint32_t n = 0; n < NUM_THREADS; n++) {
-		free(inference[n]);
-	}
+	free(residual);
 }
 #endif
 
