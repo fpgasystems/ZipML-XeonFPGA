@@ -1,5 +1,14 @@
-float_IPs
-intel_stuff
-qpi
-Datasets
-zipmlfpga
+#Quartus related files
+db
+incremental_db
+*.summary
+*.rpt
+quartus.ini
+*.qws
+ome2_ivt.qsf
+ome2_ivt.done
+ome_bot-CCIS.qarlog
+
+#For MACOSX file manager
+*.DS_Store
+._*

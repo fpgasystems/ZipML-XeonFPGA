@@ -1,0 +1,20 @@
+# system info fp_mult_arria10 on 2017.10.15.16:12:34
+system_info:
+name,value
+DEVICE,10AS016C3U19E2LG
+DEVICE_FAMILY,Arria 10
+GENERATION_ID,1508076753
+#
+#
+# Files generated for fp_mult_arria10 on 2017.10.15.16:12:34
+files:
+filepath,kind,attributes,module,is_top
+sim/fp_mult_arria10.v,VERILOG,CONTAINS_INLINE_CONFIGURATION,fp_mult_arria10,true
+altera_fp_functions_160/sim/dspba_library_package.vhd,VHDL,,fp_mult_arria10_altera_fp_functions_160_a7kpira,false
+altera_fp_functions_160/sim/dspba_library.vhd,VHDL,,fp_mult_arria10_altera_fp_functions_160_a7kpira,false
+altera_fp_functions_160/sim/fp_mult_arria10_altera_fp_functions_160_a7kpira.vhd,VHDL,,fp_mult_arria10_altera_fp_functions_160_a7kpira,false
+#
+# Map from instance-path to kind of module
+instances:
+instancePath,module
+fp_mult_arria10.fp_functions_0,fp_mult_arria10_altera_fp_functions_160_a7kpira

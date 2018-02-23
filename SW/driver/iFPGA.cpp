@@ -42,7 +42,7 @@ using namespace AAL;
 
 #define MAX_page_count 2048
 
-iFPGA::iFPGA(RuntimeClient *rtc, uint32_t _page_count, uint32_t _page_size_in_cache_lines) :
+iFPGA::iFPGA(RuntimeClient *rtc, uint32_t _page_count, uint32_t _page_size_in_cache_lines, char _IOmem_separate) :
 #ifdef HARPv1
 m_AFUService(NULL),
 #else
@@ -59,6 +59,7 @@ m_DSMSize(0)
 {
 	page_size_in_cache_lines = _page_size_in_cache_lines;
 	page_count = _page_count;
+	IOmem_separate = _IOmem_separate;
 
 	m_InputVirt = (btVirtAddr*)malloc(page_count*sizeof(btVirtAddr));
 	m_InputPhys = (btPhysAddr*)malloc(page_count*sizeof(btPhysAddr));
@@ -83,7 +84,7 @@ m_DSMSize(0)
 #endif
 
 	m_Sem.Create(0, 1);
-	allocateSuccess = allocateWorkspace();
+	allocateSuccess = allocateWorkspace(IOmem_separate);
 }
 
 iFPGA::~iFPGA() {
@@ -105,10 +106,12 @@ iFPGA::~iFPGA() {
 	m_runtimeClient->end();
 #else
 	// Clean-up and return
-	for(int i = 0; i < page_count; i++) {
-		m_pALIBufferService->bufferFree(m_OutputVirt[i]);
+	if (IOmem_separate == 1) {
+		for(uint32_t i = 0; i < page_count; i++) {
+			m_pALIBufferService->bufferFree(m_OutputVirt[i]);
+		}
 	}
-	for(int i = 0; i < page_count; i++) {
+	for(uint32_t i = 0; i < page_count; i++) {
 		m_pALIBufferService->bufferFree(m_InputVirt[i]);
 	}
 	m_pALIBufferService->bufferFree(m_DSMVirt);
@@ -423,7 +426,7 @@ void iFPGA::doTransaction()
 	*StatusAddr = 0;
 }
 
-char iFPGA::allocateWorkspace() {
+char iFPGA::allocateWorkspace(char IOmem_separate) {
 	// Request our AFU.
 
 	// NOTE: This example is bypassing the Resource Manager's configuration record lookup
@@ -460,17 +463,19 @@ char iFPGA::allocateWorkspace() {
 		m_AFUService->WorkspaceAllocate(CL(page_size_in_cache_lines), TransactionID(i+1));
 		m_Sem.Wait();
 	}
-	for(uint32_t i = 0; i < page_count; i++) // Output
-	{
-		m_AFUService->WorkspaceAllocate(CL(page_size_in_cache_lines), TransactionID(page_count+i+1));
-		m_Sem.Wait();
+	if (IOmem_separate == 1) {
+		for(uint32_t i = 0; i < page_count; i++) { // Output
+			m_AFUService->WorkspaceAllocate(CL(page_size_in_cache_lines), TransactionID(page_count+i+1));
+			m_Sem.Wait();
+		}
 	}
 
 	MSG("Zeroing allocated pages.");
-	for(uint32_t i = 0; i < page_count*page_size_in_cache_lines*8; i++)
-	{
-		// writeToMemory64('i', 0, i);
-		writeToMemory64('o', 0, i);
+	for(uint32_t i = 0; i < page_count*page_size_in_cache_lines*8; i++) {
+		if (IOmem_separate == 1)
+			writeToMemory64('o', 0, i);
+		else
+			writeToMemory64('i', 0, i);
 	}
 
 	if (m_Result == 0) {
@@ -498,7 +503,7 @@ char iFPGA::allocateWorkspace() {
 		m_AFUService->CSRWrite(CSR_ADDR_RESET, 1);
 		for(uint32_t i = 0; i < page_count; i++)
 		{
-		// Set input workspace address
+			// Set input workspace address
 			m_AFUService->CSRWrite(CSR_SRC_ADDR, CACHELINE_ALIGNED_ADDR(m_InputPhys[i]));
 		}
 		m_AFUService->CSRWrite(CSR_SRC_ADDR, 0);
@@ -508,8 +513,11 @@ char iFPGA::allocateWorkspace() {
 		m_AFUService->CSRWrite(CSR_ADDR_RESET, 2);
 		for(uint32_t i = 0; i < page_count; i++)
 		{
-		// Set output workspace address
-			m_AFUService->CSRWrite(CSR_DST_ADDR, CACHELINE_ALIGNED_ADDR(m_OutputPhys[i]));
+			// Set output workspace address
+			if (IOmem_separate == 1) {
+				m_AFUService->CSRWrite(CSR_DST_ADDR, CACHELINE_ALIGNED_ADDR(m_OutputPhys[i]));
+			else
+				m_AFUService->CSRWrite(CSR_DST_ADDR, CACHELINE_ALIGNED_ADDR(m_InputPhys[i]));
 		}
 		m_AFUService->CSRWrite(CSR_DST_ADDR, 0);
 
@@ -585,7 +593,7 @@ char iFPGA::allocateWorkspace() {
 	}
 
 	// Repeat for the Input and Output Buffers
-	for(int i = 0; i < page_count; i++) { // Input
+	for(uint32_t i = 0; i < page_count; i++) { // Input
 		if( ali_errnumOK != m_pALIBufferService->bufferAllocate(CL(page_size_in_cache_lines), &m_InputVirt[i]) ) {
 			m_bIsOK = false;
 			m_Sem.Post(1);
@@ -600,26 +608,30 @@ char iFPGA::allocateWorkspace() {
 			return -1;
 		}
 	}
-	for(int i = 0; i < page_count; i++) { // Input
-		if( ali_errnumOK != m_pALIBufferService->bufferAllocate(CL(page_size_in_cache_lines), &m_OutputVirt[i]) ) {
-			m_bIsOK = false;
-			m_Sem.Post(1);
-			m_Result = -1;
-			return -1;
-		}
-		m_OutputSize[i] = CL(page_size_in_cache_lines);
-		m_OutputPhys[i] = m_pALIBufferService->bufferGetIOVA(m_OutputVirt[i]);
-		if(0 == m_OutputPhys[i]) {
-			m_bIsOK = false;
-			m_Result = -1;
-			return -1;
+	if (IOmem_separate == 1) {
+		for(uint32_t i = 0; i < page_count; i++) { // Output
+			if( ali_errnumOK != m_pALIBufferService->bufferAllocate(CL(page_size_in_cache_lines), &m_OutputVirt[i]) ) {
+				m_bIsOK = false;
+				m_Sem.Post(1);
+				m_Result = -1;
+				return -1;
+			}
+			m_OutputSize[i] = CL(page_size_in_cache_lines);
+			m_OutputPhys[i] = m_pALIBufferService->bufferGetIOVA(m_OutputVirt[i]);
+			if(0 == m_OutputPhys[i]) {
+				m_bIsOK = false;
+				m_Result = -1;
+				return -1;
+			}
 		}
 	}
 
 	MSG("Zeroing allocated pages.");
-	for(int i = 0; i < page_count*page_size_in_cache_lines*8; i++) {
-		// writeToMemory64('i', 0, i);
-		writeToMemory64('o', 0, i);
+	for(uint32_t i = 0; i < page_count*page_size_in_cache_lines*8; i++) {
+		if (IOmem_separate == 1)
+			writeToMemory64('o', 0, i);
+		else
+			writeToMemory64('i', 0, i);	
 	}
 
 	if(true == m_bIsOK) {
@@ -645,7 +657,7 @@ char iFPGA::allocateWorkspace() {
 		// Source pages
 		m_pALIMMIOService->mmioWrite32(CSR_SRC_ADDR, 0);
 		m_pALIMMIOService->mmioWrite32(CSR_ADDR_RESET, 1);
-		for(int i = 0; i < page_count; i++) {
+		for(uint32_t i = 0; i < page_count; i++) {
 		// Set input workspace address
 			m_pALIMMIOService->mmioWrite32(CSR_SRC_ADDR, CACHELINE_ALIGNED_ADDR(m_InputPhys[i]));
 		}
@@ -654,9 +666,12 @@ char iFPGA::allocateWorkspace() {
 		// Destination pages
 		m_pALIMMIOService->mmioWrite32(CSR_DST_ADDR, 0);
 		m_pALIMMIOService->mmioWrite32(CSR_ADDR_RESET, 2);
-		for(int i = 0; i < page_count; i++) {
+		for(uint32_t i = 0; i < page_count; i++) {
 			// Set output workspace address
-			m_pALIMMIOService->mmioWrite32(CSR_DST_ADDR, CACHELINE_ALIGNED_ADDR(m_OutputPhys[i]));
+			if (IOmem_separate == 1)
+				m_pALIMMIOService->mmioWrite32(CSR_DST_ADDR, CACHELINE_ALIGNED_ADDR(m_OutputPhys[i]));
+			else
+				m_pALIMMIOService->mmioWrite32(CSR_DST_ADDR, CACHELINE_ALIGNED_ADDR(m_InputPhys[i]));
 		}
 		m_pALIMMIOService->mmioWrite32(CSR_DST_ADDR, 0);
 
@@ -665,26 +680,53 @@ char iFPGA::allocateWorkspace() {
 		m_pALIMMIOService->mmioWrite32(CSR_ADDR_RESET, 4);
 		CSR_WRITE32(this, CSR_CTL, 3);
 		SleepSec(1);
-		for(int i = 0; i < page_count; i++) {
-			while ( readFromMemory64('o', i*8) == 0 ) {
-				SleepNano(100);
+
+		if (IOmem_separate == 1) {
+			for(uint32_t i = 0; i < page_count; i++) {
+				while ( readFromMemory64('o', i*8) == 0 ) {
+					SleepNano(100);
+				}
+				uint64_t address = readFromMemory64('o', i*8) & 0x3FFFFFFFFFF;
+				printf("src_addr %d: %zx \n", i, address);
+				if (address != (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i])) {
+					printf("Page table verification failed for src_addr: %zx, supposed to be: %zx \n", address, (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i]) );
+					return -1;
+				}
 			}
-			uint64_t address = readFromMemory64('o', i*8) & 0x3FFFFFFFFFF;
-			printf("src_addr %d: %zx \n", i, address);
-			if (address != (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i])) {
-				printf("Page table verification failed for src_addr: %zx, supposed to be: %zx \n", address, (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i]) );
-				return -1;
+			for(uint32_t i = 0; i < page_count; i++) {
+				while (readFromMemory64('o', (i+page_count)*8) == 0 ) {
+					SleepNano(100);
+				}
+				uint64_t address = readFromMemory64('o', (i+page_count)*8) & 0x3FFFFFFFFFF;
+				printf("dst_addr %d: %zx \n", i, address);
+				if (address != (uint64_t)CACHELINE_ALIGNED_ADDR(m_OutputPhys[i])) {
+					printf("Page table verification failed for dst_addr: %zx, supposed to be: %zx \n", address, (uint64_t)CACHELINE_ALIGNED_ADDR(m_OutputPhys[i]) );
+					return -1;
+				}
 			}
 		}
-		for(int i = 0; i < page_count; i++) {
-			while (readFromMemory64('o', (i+page_count)*8) == 0 ) {
-				SleepNano(100);
+		else {
+			for(uint32_t i = 0; i < page_count; i++) {
+				while ( readFromMemory64('i', i*8) == 0 ) {
+					SleepNano(100);
+				}
+				uint64_t address = readFromMemory64('i', i*8) & 0x3FFFFFFFFFF;
+				printf("src_addr %d: %zx \n", i, address);
+				if (address != (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i])) {
+					printf("Page table verification failed for src_addr: %zx, supposed to be: %zx \n", address, (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i]) );
+					return -1;
+				}
 			}
-			uint64_t address = readFromMemory64('o', (i+page_count)*8) & 0x3FFFFFFFFFF;
-			printf("dst_addr %d: %zx \n", i, address);
-			if (address != (uint64_t)CACHELINE_ALIGNED_ADDR(m_OutputPhys[i])) {
-				printf("Page table verification failed for dst_addr: %zx, supposed to be: %zx \n", address, (uint64_t)CACHELINE_ALIGNED_ADDR(m_OutputPhys[i]) );
-				return -1;
+			for(uint32_t i = 0; i < page_count; i++) {
+				while (readFromMemory64('i', (i+page_count)*8) == 0 ) {
+					SleepNano(100);
+				}
+				uint64_t address = readFromMemory64('i', (i+page_count)*8) & 0x3FFFFFFFFFF;
+				printf("dst_addr %d: %zx \n", i, address);
+				if (address != (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i])) {
+					printf("Page table verification failed for dst_addr: %zx, supposed to be: %zx \n", address, (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i]) );
+					return -1;
+				}
 			}
 		}
 		printf("Page tables verified!\n");

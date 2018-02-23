@@ -110,7 +110,7 @@ class iFPGA: public CAASBase, public IServiceClient {
 #endif
 public:
 
-	iFPGA(RuntimeClient * rtc, uint32_t _page_count, uint32_t _page_size_in_cache_lines);
+	iFPGA(RuntimeClient * rtc, uint32_t _page_count, uint32_t _page_size_in_cache_lines, char _IOmem_separate);
 	~iFPGA();
 
 	void writeToMemory32(char inOrOut, uint32_t dat32, uint32_t address32);
@@ -133,8 +133,9 @@ public:
 private:
 	uint32_t page_size_in_cache_lines;
 	uint32_t page_count;
+	char IOmem_separate;
 
-	char allocateWorkspace();
+	char allocateWorkspace(char IOmem_separate);
 	char allocateSuccess;
 
 #ifdef HARPv1

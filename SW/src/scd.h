@@ -35,13 +35,44 @@ public:
 	float b_min;
 	uint32_t b_toIntegerScaler;
 
-	scd(uint32_t _b_toIntegerScaler){
+	char gotFPGA;
+	RuntimeClient runtimeClient;
+	iFPGA* interfaceFPGA;
+	uint32_t a_address;
+	uint32_t b_address;
+	uint32_t residual_address;
+	uint32_t step_address;
+
+	uint32_t page_size_in_cache_lines;
+	uint32_t pages_to_allocate;
+	uint32_t numValuesPerLine;
+
+	scd(char getFPGA, uint32_t _b_toIntegerScaler){
+		page_size_in_cache_lines = 65536; // 65536 x 64B = 4 MB
+		pages_to_allocate = 8;
+		numValuesPerLine = 16;
+
+		if (getFPGA == 1) {
+			interfaceFPGA = new iFPGA(&runtimeClient, pages_to_allocate, page_size_in_cache_lines, 0);
+			if(!runtimeClient.isOK()){
+				cout << "FPGA runtime failed to start" << endl;
+				exit(1);
+			}
+			gotFPGA = 1;
+		}
+		else
+			gotFPGA = 0;
+
+
 		a = NULL;
 		b = NULL;
 
 		b_toIntegerScaler = _b_toIntegerScaler;
 	}
 	~scd() {
+		if (gotFPGA == 1)
+			delete interfaceFPGA;
+
 		if (a != NULL) {
 			for (uint32_t j = 0; j < numFeatures; j++) {
 				free(a[j]);
@@ -81,6 +112,9 @@ public:
 	void AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
 	void AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
 #endif
+
+	uint32_t copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize);
+	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
 };
 
 
@@ -375,8 +409,10 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
 	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	float* x_end = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(x_end, 0, numFeatures*sizeof(float));
 
-	cout << "Initial loss: " << calculate_loss(x) << endl;
+	cout << "Initial loss: " << calculate_loss(x_end) << endl;
 
 	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
 
@@ -390,24 +426,37 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 				for (uint32_t i = 0; i < minibatchSize; i++) {
 					gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
 				}
+				// cout << "gradient: " << gradient << endl;
 				float step = stepSize*(gradient/minibatchSize);
-
+				// cout << "step: " << step << endl;
 				x[m*numFeatures + j] -= step;
 
 				for (uint32_t i = 0; i < minibatchSize; i++) {
+					// if (i%16 == 0) {
+					// 	cout << "a[j][m*minibatchSize + i]: " << a[j][m*minibatchSize + i] << endl;
+					// 	cout << "step*a[j][m*minibatchSize + i]: " << step*a[j][m*minibatchSize + i] << endl;
+					// }
+
 					residual[m*minibatchSize + i] -= step*a[j][m*minibatchSize + i];
+
+					// if (i%16 == 0) {
+					// 	cout << "residual[m*minibatchSize + i]: " << residual[m*minibatchSize + i] << endl;
+					// }
 				}
 
 			}
 		}
 
-		for (uint32_t m = 1; m < numMinibatches; m++) {
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			x_end[j] = 0;
+		}
+		for (uint32_t m = 0; m < numMinibatches; m++) {
 			for (uint32_t j = 0; j < numFeatures; j++) {
-				x[j] += x[m*numFeatures + j];
+				x_end[j] += x[m*numFeatures + j];
 			}
 		}
 		for (uint32_t j = 0; j < numFeatures; j++) {
-			x[j] = x[j]/numMinibatches;
+			x_end[j] = x_end[j]/numMinibatches;
 		}
 
 		double end = get_time();
@@ -415,16 +464,17 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 		if (x_history != NULL) {
 			for (uint32_t j = 0; j < numFeatures; j++) {
-				x_history[epoch*numFeatures + j] = x[j];
+				x_history[epoch*numFeatures + j] = x_end[j];
 			}
 		}
 		else
-			cout << "Loss " << epoch << ": " << calculate_loss(x) << endl;
+			cout << "Loss " << epoch << ": " << calculate_loss(x_end) << endl;
 
 		cout << epoch << endl;
 	}
 
 	free(x);
+	free(x_end);
 	free(residual);
 }
 
@@ -696,6 +746,103 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32
 	free(residual);
 }
 #endif
+
+uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize) {
+	uint32_t address32 = 0;
+
+	b_address = address32/numValuesPerLine;
+	for (uint32_t i = 0; i < numMinibatches*minibatchSize; i++) {
+		interfaceFPGA->writeToMemoryFloat('i', b[i], address32++);
+	}
+	if (address32%numValuesPerLine > 0)
+		address32 += (numValuesPerLine - address32%numValuesPerLine);
+	uint32_t column_size = address32;
+
+	a_address = address32/numValuesPerLine;
+	for (uint32_t j = 0; j < numFeatures; j++) {
+		for (uint32_t i = 0; i < numMinibatches*minibatchSize; i++) {
+			interfaceFPGA->writeToMemoryFloat('i', a[j][i], address32++);
+		}
+		if (address32%numValuesPerLine > 0)
+			address32 += (numValuesPerLine - address32%numValuesPerLine);
+	}
+
+	residual_address = address32/numValuesPerLine;
+	address32 += column_size;
+	step_address = address32/numValuesPerLine;
+
+	return address32;
+}
+
+void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize) {
+	uint32_t numMinibatches = numSamples/minibatchSize;
+	cout << "numMinibatches: " << numMinibatches << endl;
+	uint32_t rest = numSamples - numMinibatches*minibatchSize;
+	cout << "rest: " << rest << endl;
+
+	uint32_t address32 = copy_data_into_FPGA_memory(numMinibatches, minibatchSize);
+
+	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	float* x_end = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(x_end, 0, numFeatures*sizeof(float));
+
+	cout << "Initial loss: " << calculate_loss(x_end) << endl;
+
+	uint64_t temp_reg = 0;
+	interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_READ_OFFSET, 0);
+	interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_WRITE_OFFSET, 0);
+	temp_reg = 0;
+	temp_reg = ((uint64_t)b_address << 32) | ((uint64_t)a_address);
+	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, temp_reg);
+	temp_reg = 0;
+	temp_reg = ((uint64_t)residual_address << 32) | ((uint64_t)step_address);
+	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, temp_reg);
+	temp_reg = 0;
+	uint32_t minibatchSize_inCL = minibatchSize/numValuesPerLine;
+	temp_reg = ((uint64_t)minibatchSize_inCL << 48) | ((uint64_t)numMinibatches << 32) | ((uint64_t)numFeatures);
+	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, temp_reg);
+	float tempStepSize = stepSize/(float)minibatchSize;
+	uint32_t* tempStepSizeAddr = (uint32_t*) &tempStepSize;
+	temp_reg = 0;
+	temp_reg = ((uint64_t)numEpochs << 32) | ((uint64_t)*tempStepSizeAddr);
+	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp_reg);
+
+	interfaceFPGA->doTransaction();
+
+	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
+		for (uint32_t m = 0; m < numMinibatches; m++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x[m*numFeatures + j] -= interfaceFPGA->readFromMemoryFloat('i', address32++);
+			}
+			if (address32%numValuesPerLine > 0)
+				address32 += (numValuesPerLine - address32%numValuesPerLine);
+		}
+		
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			x_end[j] = 0;
+		}
+		for (uint32_t m = 0; m < numMinibatches; m++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_end[j] += x[m*numFeatures + j];
+			}
+		}
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			x_end[j] = x_end[j]/numMinibatches;
+		}
+
+		if (x_history != NULL) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_history[epoch*numFeatures + j] = x_end[j];
+			}
+		}
+		else
+			cout << "Loss " << epoch << ": " << calculate_loss(x_end) << endl;
+	}
+
+	free(x);
+	free(x_end);
+}
 
 float scd::calculate_loss(float* x) {
 	float loss = 0;

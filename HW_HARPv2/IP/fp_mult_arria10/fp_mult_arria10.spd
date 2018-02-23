@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<simPackage>
+ <file
+   path="altera_fp_functions_160/sim/dspba_library_package.vhd"
+   type="VHDL"
+   library="altera_fp_functions_160" />
+ <file
+   path="altera_fp_functions_160/sim/dspba_library.vhd"
+   type="VHDL"
+   library="altera_fp_functions_160" />
+ <file
+   path="altera_fp_functions_160/sim/fp_mult_arria10_altera_fp_functions_160_a7kpira.vhd"
+   type="VHDL"
+   library="altera_fp_functions_160" />
+ <file
+   path="sim/fp_mult_arria10.v"
+   type="VERILOG"
+   hasInlineConfiguration="true" />
+ <topLevel name="fp_mult_arria10" />
+ <deviceFamily name="arria10" />
+</simPackage>
