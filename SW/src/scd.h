@@ -26,6 +26,9 @@ public:
 	float** a;	// Data set features matrix: numSamples x numFeatures
 	float* b;	// Data set labels vector: numSamples
 
+	uint32_t** compressed_a;
+	uint32_t* compressed_a_sizes;
+
 	uint32_t numFeatures;
 	uint32_t numSamples;
 
@@ -33,8 +36,7 @@ public:
 	char b_normalizedToMinus1_1;
 	float b_range;
 	float b_min;
-	uint32_t b_toIntegerScaler;
-
+	
 	char gotFPGA;
 	RuntimeClient runtimeClient;
 	iFPGA* interfaceFPGA;
@@ -47,7 +49,7 @@ public:
 	uint32_t pages_to_allocate;
 	uint32_t numValuesPerLine;
 
-	scd(char getFPGA, uint32_t _b_toIntegerScaler){
+	scd(char getFPGA){
 		page_size_in_cache_lines = 65536; // 65536 x 64B = 4 MB
 		pages_to_allocate = 8;
 		numValuesPerLine = 16;
@@ -66,8 +68,6 @@ public:
 
 		a = NULL;
 		b = NULL;
-
-		b_toIntegerScaler = _b_toIntegerScaler;
 	}
 	~scd() {
 		if (gotFPGA == 1)
@@ -81,6 +81,16 @@ public:
 		}
 		if (b != NULL)
 			free(b);
+
+		if (compressed_a_sizes != NULL)
+			free(compressed_a_sizes);
+
+		if (compressed_a != NULL) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				free(compressed_a[j]);
+			}
+			free(compressed_a);
+		}
 	}
 
 	void print_samples(uint32_t num) {
@@ -94,15 +104,14 @@ public:
 		}
 	}
 
+	// Data loading functions
+	void load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures);
+	void generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, char binary);
+
 	// Normalization and data shaping
 	void a_normalize(char toMinus1_1, char rowOrColumnWise);
 	void b_normalize(char toMinus1_1, char binarize_b, float b_toBinarizeTo);
-	void compress_column(float* ptr);
-
-	// Data loading functions
-	void load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures);
-	void load_raw_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures);
-	void generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, char binary);
+	float compress_a(uint32_t toIntegerScaler);
 
 	float calculate_loss(float* x);
 
@@ -112,12 +121,15 @@ public:
 	void AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
 	void AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
 #endif
+	void compressed_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, uint32_t toIntegerScaler);
+
 
 	uint32_t copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize);
 	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness);
+
+	uint32_t decompress_column(uint32_t* compressedColumn, uint32_t inNumWords, float* decompressedColumn, uint32_t toIntegerScaler);
+	uint32_t compress_column(float* originalColumn, uint32_t* compressedColumn, uint32_t toIntegerScaler);
 };
-
-
 
 void scd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures) {
 	cout << "Reading " << pathToFile << endl;
@@ -134,6 +146,9 @@ void scd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _num
 	if (b != NULL)
 		free(b);
 	b = (float*)aligned_alloc(64, numSamples*sizeof(float));
+
+	compressed_a_sizes = (uint32_t*)aligned_alloc(64, numFeatures*sizeof(uint32_t));
+	memset(compressed_a_sizes, 0, numFeatures*sizeof(uint32_t));
 
 	string line;
 	ifstream f(pathToFile);
@@ -194,6 +209,9 @@ void scd::generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, c
 	if (b != NULL)
 		free(b);
 	b = (float*)aligned_alloc(64, numSamples*sizeof(float));
+
+	compressed_a_sizes = (uint32_t*)aligned_alloc(64, numFeatures*sizeof(uint32_t));
+	memset(compressed_a_sizes, 0, numFeatures*sizeof(uint32_t));
 
 	srand(7);
 	float* x = (float*)malloc(numFeatures*sizeof(float));
@@ -320,6 +338,21 @@ void scd::b_normalize(char toMinus1_1, char binarize_b, float b_toBinarizeTo) {
 	}
 }
 
+float scd::compress_a(uint32_t toIntegerScaler) {
+	uint32_t numWordsAfterCompression = 0;
+
+	compressed_a = (uint32_t**)malloc(numFeatures*sizeof(uint32_t*));
+	for (uint32_t j = 0; j < numFeatures; j++) {
+		compressed_a[j] = (uint32_t*)aligned_alloc(64, (numSamples + (8 - numSamples%8))*sizeof(uint32_t));
+		compressed_a_sizes[j] = compress_column(a[j], compressed_a[j], toIntegerScaler);
+
+		numWordsAfterCompression += compressed_a_sizes[j];
+	}
+	float compressionRate = (float)(numSamples*numFeatures)/(float)numWordsAfterCompression;
+
+	return compressionRate;
+}
+
 static void shuffle(uint32_t* indexes, uint32_t size) {
 	for (uint32_t j = 0; j < size; j++) {
 		uint32_t rand_j = size*((float)(rand()-1)/(float)RAND_MAX);
@@ -426,9 +459,9 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 				for (uint32_t i = 0; i < minibatchSize; i++) {
 					gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
 				}
-				cout << "gradient: " << gradient << endl;
+				// cout << "gradient: " << gradient << endl;
 				float step = stepSize*(gradient/minibatchSize);
-				cout << "step: " << step << endl;
+				// cout << "step: " << step << endl;
 				x[m*numFeatures + j] -= step;
 
 				for (uint32_t i = 0; i < minibatchSize; i++) {
@@ -473,6 +506,114 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 		cout << epoch << endl;
 	}
 
+	free(x);
+	free(x_end);
+	free(residual);
+}
+
+
+void scd::compressed_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, uint32_t toIntegerScaler) {
+	float* residual = (float*)aligned_alloc(64, numSamples*sizeof(float));
+	memset(residual, 0, numSamples*sizeof(float));
+
+	uint32_t numMinibatches = numSamples/minibatchSize;
+	cout << "numMinibatches: " << numMinibatches << endl;
+	uint32_t rest = numSamples - numMinibatches*minibatchSize;
+	cout << "rest: " << rest << endl;
+
+	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	float* x_end = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(x_end, 0, numFeatures*sizeof(float));
+
+	cout << "Initial loss: " << calculate_loss(x_end) << endl;
+
+	float* decompressedColumn = (float*)aligned_alloc(64, numSamples*sizeof(float));
+	// for (uint32_t j = 0; j < numFeatures; j++) {
+	// 	cout << "compressed_a_sizes[" << j << "]: " <<  compressed_a_sizes[j] << endl;
+	// }
+
+	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
+
+		uint32_t compressedOffsets[numFeatures];
+		uint32_t decompressedOffsets[numFeatures];
+		memset(compressedOffsets, 0, numFeatures*sizeof(uint32_t));
+		memset(decompressedOffsets, 0, numFeatures*sizeof(uint32_t));
+
+		double start = get_time();
+
+		for (uint32_t m = 0; m < numMinibatches; m++) {
+			
+			for (uint32_t j = 0; j < numFeatures; j++) {
+
+				if (compressed_a_sizes[j] > compressedOffsets[j]) {
+
+					uint32_t compressedMiniBatchSize;
+					if (m == numMinibatches-1) {
+						compressedMiniBatchSize = compressed_a_sizes[j] - compressedOffsets[j];
+					}
+					else {
+						compressedMiniBatchSize = compressed_a_sizes[j]/numMinibatches;
+						if (compressedMiniBatchSize%8 > 0)
+							compressedMiniBatchSize += (8 - compressedMiniBatchSize%8);
+					}
+
+					// cout << "compressedMiniBatchSize: " <<  compressedMiniBatchSize << endl;
+					// cout << "compressedOffsets[" << j << "]: " <<  compressedOffsets[j] << endl;
+
+					uint32_t decompressedMiniBatchSize = decompress_column(compressed_a[j] + compressedOffsets[j], compressedMiniBatchSize, decompressedColumn, toIntegerScaler);
+
+					// cout << "decompressedMiniBatchSize: " <<  decompressedMiniBatchSize << endl;
+					// cout << "decompressedOffsets[0]: " <<  decompressedOffsets[j] << endl;
+
+					float gradient = 0;
+					for (uint32_t i = 0; i < decompressedMiniBatchSize; i++) {
+						gradient += (residual[decompressedOffsets[j] + i] - b[decompressedOffsets[j] + i])*decompressedColumn[i];
+					}
+					
+					float step = stepSize*(gradient/decompressedMiniBatchSize);
+					x[m*numFeatures + j] -= step;
+
+					for (uint32_t i = 0; i < decompressedMiniBatchSize; i++) {
+						residual[decompressedOffsets[j] + i] -= step*decompressedColumn[i];
+					}
+
+					compressedOffsets[j] += compressedMiniBatchSize;
+					decompressedOffsets[j] += decompressedMiniBatchSize;
+
+				}
+
+				// cout << j << endl;
+			}
+		}
+
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			x_end[j] = 0;
+		}
+		for (uint32_t m = 0; m < numMinibatches; m++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_end[j] += x[m*numFeatures + j];
+			}
+		}
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			x_end[j] = x_end[j]/numMinibatches;
+		}
+
+		double end = get_time();
+		cout << "Time for one epoch: " << end-start << endl;
+
+		if (x_history != NULL) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_history[epoch*numFeatures + j] = x_end[j];
+			}
+		}
+		else
+			cout << "Loss " << epoch << ": " << calculate_loss(x_end) << endl;
+
+		cout << epoch << endl;
+	}
+
+	free(decompressedColumn);
 	free(x);
 	free(x_end);
 	free(residual);
@@ -860,262 +1001,362 @@ float scd::calculate_loss(float* x) {
 	return loss;
 }
 
-// void decompress_column(uint32_t* compressed_column, uint32_t inNumWords, float* decompressed_column){
-// 	uint32_t outNumWords = 0;
+uint32_t scd::decompress_column(uint32_t* compressedColumn, uint32_t inNumWords, float* decompressedColumn, uint32_t toIntegerScaler) {
+	uint32_t outNumWords = 0;
 
-// 	for (uint32_t i = 0; i < inNumWords; i+=8) {
-// 		uint32_t meta = (compressed_column[i*8-1] >> 25);
-// 		if ( meta == 0x40 ) {
-// 			int base = (int)compressed_column[i];
-// 			decompressed_column[outNumWords++] = ((float)base)/((float)b_toIntegerScaler);
-			
-// 			int delta[31];
-// 			delta[0] = (int)(CL[1] & 0x7F);
-// 			delta[1] = (int)((CL[1] >> 7 ) & 0x7F);
-// 			delta[2] = (int)((CL[1] >> 14 ) & 0x7F);
-// 			delta[3] = (int)((CL[1] >> 21 ) & 0x7F);
-// 			delta[4] = (int)(((CL[2] & 0x7) << 4) + (CL[1] >> 28));
-// 			delta[5] = (int)((CL[2] >> 3) & 0x7F);
-// 			delta[6] = (int)((CL[2] >> 10) & 0x7F);
-// 			delta[7] = (int)((CL[2] >> 17) & 0x7F);
-// 			delta[8] = (int)((CL[2] >> 24) & 0x7F);
-// 			delta[9] = (int)(((CL[3] & 0x3F) << 1) + (CL[2] >> 31));
-// 			delta[10] = (int)((CL[3] >> 6) & 0x7F);
-// 			delta[11] = (int)((CL[3] >> 13) & 0x7F);
-// 			delta[12] = (int)((CL[3] >> 20) & 0x7F);
-// 			delta[13] = (int)(((CL[4] & 0x3) << 5) + (CL[3] >> 27));
-// 			delta[14] = (int)((CL[4] >> 2) & 0x7F);
-// 			delta[15] = (int)((CL[4] >> 9) & 0x7F);
-// 			delta[16] = (int)((CL[4] >> 16) & 0x7F);
-// 			delta[17] = (int)((CL[4]))
+	for (uint32_t i = 0; i < inNumWords; i+=8) {
+		uint32_t meta = (compressedColumn[i+7] >> 24) & 0xFC;
+		int base = (int)compressedColumn[i];
+		decompressedColumn[outNumWords++] = ((float)base)/((float)(1 << toIntegerScaler));
 
+		// cout << "meta: " << hex << meta << dec << endl;
 
-// 			for (uint32_t k = 0; k < 31; k++) {
-// 				decompressed_column[outNumWords++] = ((float)(base+delta[k]))/((float)b_toIntegerScaler);
-// 			}
-			
+		uint32_t CL[8];
+		for (uint32_t j = 1; j < 8; j++){
+			CL[j] = compressedColumn[i + j];
+		}
 
+		if ( meta == 0x40 ) {
+			int delta[31];
+			delta[0] = (int)(CL[1] & 0x7F);
+			delta[1] = (int)((CL[1] >> 7 ) & 0x7F);
+			delta[2] = (int)((CL[1] >> 14 ) & 0x7F);
+			delta[3] = (int)((CL[1] >> 21 ) & 0x7F);
+			delta[4] = (int)(((CL[2] & 0x7) << 4) + (CL[1] >> 28));
+			delta[5] = (int)((CL[2] >> 3) & 0x7F);
+			delta[6] = (int)((CL[2] >> 10) & 0x7F);
+			delta[7] = (int)((CL[2] >> 17) & 0x7F);
+			delta[8] = (int)((CL[2] >> 24) & 0x7F);
+			delta[9] = (int)(((CL[3] & 0x3F) << 1) + (CL[2] >> 31));
+			delta[10] = (int)((CL[3] >> 6) & 0x7F);
+			delta[11] = (int)((CL[3] >> 13) & 0x7F);
+			delta[12] = (int)((CL[3] >> 20) & 0x7F);
+			delta[13] = (int)(((CL[4] & 0x3) << 5) + (CL[3] >> 27));
+			delta[14] = (int)((CL[4] >> 2) & 0x7F);
+			delta[15] = (int)((CL[4] >> 9) & 0x7F);
+			delta[16] = (int)((CL[4] >> 16) & 0x7F);
+			delta[17] = (int)((CL[4] >> 23) & 0x7F);
+			delta[18] = (int)(((CL[5] & 0x1F) << 2) + (CL[4] >> 30));
+			delta[19] = (int)((CL[5] >> 5) & 0x7F);
+			delta[20] = (int)((CL[5] >> 12) & 0x7F);
+			delta[21] = (int)((CL[5] >> 19) & 0x7F);
+			delta[22] = (int)(((CL[6] & 0x1) << 6) + (CL[5] >> 26));
+			delta[23] = (int)((CL[6] >> 1) & 0x7F);
+			delta[24] = (int)((CL[6] >> 8) & 0x7F);
+			delta[25] = (int)((CL[6] >> 15) & 0x7F);
+			delta[26] = (int)((CL[6] >> 22) & 0x7F);
+			delta[27] = (int)(((CL[7] & 0xF) << 3) + (CL[6] >> 29));
+			delta[28] = (int)((CL[7] >> 4) & 0x7F);
+			delta[29] = (int)((CL[7] >> 11) & 0x7F);
+			delta[30] = (int)((CL[7] >> 18) & 0x7F);
 
-// 		}
-// 		else if (meta == 0x20) {
-// 			int base = (int)compressed_column[i];
-// 			decompressed_column[outNumWords++] = ((float)base)/((float)b_toIntegerScaler);
+			for (uint32_t k = 0; k < 31; k++) {
+				if ((delta[k] >> 6) == 0x1) {
+					delta[k] = delta[k] - (1 << 7);
+					decompressedColumn[outNumWords++] = ((float)(base+delta[k]))/((float)(1 << toIntegerScaler));
+				}
+				else
+					decompressedColumn[outNumWords++] = ((float)(base+delta[k]))/((float)(1 << toIntegerScaler));
+			}
+		}
+		else if (meta == 0x30) {
+			int delta[24];
+			delta[0] = (int)(CL[1] & 0x1FF);
+			delta[1] = (int)((CL[1] >> 9) & 0x1FF);
+			delta[2] = (int)((CL[1] >> 18) & 0x1FF);
+			delta[3] = (int)(((CL[2] & 0xF) << 5) + (CL[1] >> 27));
+			delta[4] = (int)((CL[2] >> 4) & 0x1FF);
+			delta[5] = (int)((CL[2] >> 13) & 0x1FF);
+			delta[6] = (int)((CL[2] >> 22) & 0x1FF);
+			delta[7] = (int)(((CL[3] & 0xFF) << 1) + (CL[2] >> 31));
+			delta[8] = (int)((CL[3] >> 8) & 0x1FF);
+			delta[9] = (int)((CL[3] >> 17) & 0x1FF);
+			delta[10] = (int)(((CL[4] & 0x7) << 6) + (CL[3] >> 26));
+			delta[11] = (int)((CL[4] >> 3) & 0x1FF);
+			delta[12] = (int)((CL[4] >> 12) & 0x1FF);
+			delta[13] = (int)((CL[4] >> 21) & 0x1FF);
+			delta[14] = (int)(((CL[5] & 0x7F) << 2) + (CL[4] >> 30));
+			delta[15] = (int)((CL[5] >> 7) & 0x1FF);
+			delta[16] = (int)((CL[5] >> 16) & 0x1FF);
+			delta[17] = (int)(((CL[6] & 0x3) << 7) +  (CL[5] >> 25));
+			delta[18] = (int)((CL[6] >> 2) & 0x1FF);
+			delta[19] = (int)((CL[6] >> 11) & 0x1FF);
+			delta[20] = (int)((CL[6] >> 20) & 0x1FF);
+			delta[21] = (int)(((CL[7] & 0x3F) << 3) + (CL[6] >> 29));
+			delta[22] = (int)((CL[7] >> 6) & 0x1FF);
+			delta[23] = (int)((CL[7] >> 15) & 0x1FF);
 
+			for (uint32_t k = 0; k < 24; k++) {
+				if ((delta[k] >> 8) == 0x1) {
+					delta[k] = delta[k] - (1 << 9);
+					decompressedColumn[outNumWords++] = ((float)(base+delta[k]))/((float)(1 << toIntegerScaler));
+				}
+				else
+					decompressedColumn[outNumWords++] = ((float)(base+delta[k]))/((float)(1 << toIntegerScaler));
+			}
+		}
+		else if (meta == 0x20) {
+			int delta[15];
+			delta[0] = (int)(CL[1] & 0x3FFF);
+			delta[1] = (int)((CL[1] >> 14) & 0x3FFF);
+			delta[2] = (int)(((CL[2] & 0x3FF) << 4) + (CL[1] >> 28));
+			delta[3] = (int)((CL[2] >> 10) & 0x3FFF);
+			delta[4] = (int)(((CL[3] & 0x3F) << 8) + (CL[2] >> 24));
+			delta[5] = (int)((CL[3] >> 6) & 0x3FFF);
+			delta[6] = (int)(((CL[4] & 0x3) << 12) + (CL[3] >> 20));
+			delta[7] = (int)((CL[4] >> 2) & 0x3FFF);
+			delta[8] = (int)((CL[4] >> 16) & 0x3FFF);
+			delta[9] = (int)(((CL[5] & 0xFFF) << 2) + (CL[4] >> 30));
+			delta[10] = (int)((CL[5] >> 12) & 0x3FFF);
+			delta[11] = (int)(((CL[6] & 0xFF) << 6) + (CL[5] >> 26));
+			delta[12] = (int)((CL[6] >> 8) & 0x3FFF);
+			delta[13] = (int)(((CL[7] & 0xF) << 10) + (CL[6] >> 22));
+			delta[14] = (int)((CL[7] >> 4) & 0x3FFF);
 
-// 		}
+			for (uint32_t k = 0; k < 15; k++) {
+				if ((delta[k] >> 13) == 0x1) {
+					delta[k] = delta[k] - (1 << 14);
+					decompressedColumn[outNumWords++] = ((float)(base+delta[k]))/((float)(1 << toIntegerScaler));
+				}
+				else
+					decompressedColumn[outNumWords++] = ((float)(base+delta[k]))/((float)(1 << toIntegerScaler));
+			}
+		}
+		else {
+			int delta[7];
+			delta[0] = (int)(CL[1] & 0x7FFFFFFF);
+			delta[1] = (int)((CL[2] & 0x3FFFFFFF) << 1) + (CL[1] >> 31);
+			delta[2] = (int)((CL[3] & 0x1FFFFFFF) << 2) + (CL[2] >> 30);
+			delta[3] = (int)((CL[4] & 0xFFFFFFF) << 3) + (CL[3] >> 29);
+			delta[4] = (int)((CL[5] & 0x7FFFFFF) << 4) + (CL[4] >> 28);
+			delta[5] = (int)((CL[6] & 0x3FFFFFF) << 5) + (CL[5] >> 27);
+			delta[6] = (int)((CL[7] & 0x1FFFFFF) << 6) + (CL[6] >> 26);
 
-// 	}
+			uint32_t numProcessed = meta >> 2;
 
+			for (uint32_t k = 0; k < numProcessed; k++) {
+				if ((delta[k] >> 30) == 0x1) {
+					delta[k] = delta[k] - (1 << 31);
+					decompressedColumn[outNumWords++] = ((float)(base+delta[k]))/((float)(1 << toIntegerScaler));
+				}
+				else
+					decompressedColumn[outNumWords++] = ((float)(base+delta[k]))/((float)(1 << toIntegerScaler));
+			}
+		}
+		// cout << "outNumWords: " << outNumWords << endl;
+	}
+	return outNumWords;
+}
 
-// }
+uint32_t scd::compress_column(float* originalColumn, uint32_t* compressedColumn, uint32_t toIntegerScaler) {
+	// 0x40 31 7bit delta, 0x30 24 9bit delta, 0x20 15 14bit delta, 0x10 7 31-bit delta
+	uint32_t numWords = 0;
 
-// void compress_column(float* original_column, uint32_t* compressed_column) {
-// 	// 0x40 31 7bit delta, 0x30 24 9bit delta, 0x20 15 14bit delta, 0x10 7 31-bit delta
-// 	uint32_t numWords = 0;
+	uint32_t CL[8];
+  	uint32_t keys[31];
 
-// 	uint32_t CL[8];
-//   	uint32_t keys[31];
+	uint32_t numProcessed = 0;
+	for (uint32_t i = 0; i < numSamples; i=i+numProcessed+1) {
+		int base = (int)(originalColumn[i]*(1 << toIntegerScaler));
 
-// 	uint32_t numProcessed = 0;
-// 	for (uint32_t i = 0; i < numSamples; i=i+num_processed+1) {
-// 		int base = (int)(original_column[i]*b_toIntegerScaler);
+		CL[0] = (uint32_t)base;
 
-// 		CL[0] = (uint32_t)base;
+		uint32_t search_for = 31;
+		uint32_t j = i + 1;
+		numProcessed = 0;
 
-// 		uint32_t search_for = 31;
-// 		uint32_t j = i + 1;
-// 		numProcessed = 0;
+		while (1) {
+			int next = (int)(originalColumn[j]*(1 << toIntegerScaler));
+			int delta = next - base;
 
-// 		while (1) {
-// 			int next = (int)(original_column[j]*b_toIntegerScaler);
-// 			int delta = next - base;
+			if (delta >= -64 && delta <= 63 && i+31 < numSamples && search_for >= 31)
+				search_for = 31;
+			else if (delta >= -256 && delta <= 255 && i+24 < numSamples && search_for >= 24)
+				search_for = 24;
+			else if (delta >= -8192 && delta <= 8191 && i+15 < numSamples && search_for >= 15)
+				search_for = 15;
+			else
+				search_for = 7;
 
-// 			if (delta >= -64 && delta <= 63 && i+31 < numSamples && search_for >= 31)
-// 				search_for = 31;
-// 			else if (delta >= -256 && delta <= 255 && i+24 < numSamples && search_for >= 24)
-// 				search_for = 24;
-// 			else if (delta >= -8192 && delta <= 8191 && i+15 < numSamples && search_for >= 15)
-// 				search_for = 15;
-// 			else
-// 				search_for = 7;
+			keys[numProcessed] = (uint32_t)delta;
+			numProcessed++;
+			if (numProcessed >= search_for) {
+				numProcessed = search_for;
+				break;
+			}
+			if (j == numSamples-1)
+				break;
+			else
+				j++;
+		}
 
-// 			keys[numProcessed] = (uint32_t)delta;
-// 			numProcessed++;
-// 			if (numProcessed >= search_for) {
-// 				numProcessed = search_for;
-// 				break;
-// 			}
-// 			j++;
-// 		}
+		// cout << "numProcessed: " << numProcessed << endl;
 
-// 		if (numProcessed == 31) {
-		
-// 			CL[1] =
-// 			((keys[4] & 0xF) << 28) |
-// 			((keys[3] & 0x7F) << 21) |
-// 			((keys[2] & 0x7F) << 14) |
-// 			((keys[1] & 0x7F) << 7) |
-// 			((keys[0] & 0x7F));
+		if (numProcessed == 31) {
+			CL[1] =
+			((keys[4] & 0xF) << 28) |
+			((keys[3] & 0x7F) << 21) |
+			((keys[2] & 0x7F) << 14) |
+			((keys[1] & 0x7F) << 7) |
+			((keys[0] & 0x7F));
 
-// 			CL[2] =
-// 			((keys[9] & 0x01) << 31) |
-// 			((keys[8] & 0x7F) << 24) |
-// 			((keys[7] & 0x7F) << 17) |
-// 			((keys[6] & 0x7F) << 10) |
-// 			((keys[5] & 0x7F) << 3) |
-// 			((keys[4] & 0x7F) >> 4);
+			CL[2] =
+			((keys[9] & 0x01) << 31) |
+			((keys[8] & 0x7F) << 24) |
+			((keys[7] & 0x7F) << 17) |
+			((keys[6] & 0x7F) << 10) |
+			((keys[5] & 0x7F) << 3) |
+			((keys[4] & 0x7F) >> 4);
 
-// 			CL[3] =
-// 			((keys[13] & 0x1F) << 27) |
-// 			((keys[12] & 0x7F) << 20) |
-// 			((keys[11] & 0x7F) << 13) |
-// 			((keys[10] & 0x7F) << 6) |
-// 			((keys[9] & 0x7F) >> 1);
+			CL[3] =
+			((keys[13] & 0x1F) << 27) |
+			((keys[12] & 0x7F) << 20) |
+			((keys[11] & 0x7F) << 13) |
+			((keys[10] & 0x7F) << 6) |
+			((keys[9] & 0x7F) >> 1);
 
-// 			CL[4] =
-// 			((keys[18] & 0x03) << 30) |
-// 			((keys[17] & 0x7F) << 23) |
-// 			((keys[16] & 0x7F) << 16) |
-// 			((keys[15] & 0x7F) << 9) |
-// 			((keys[14] & 0x7F) << 2) |
-// 			((keys[13] & 0x7F) >> 5);
+			CL[4] =
+			((keys[18] & 0x03) << 30) |
+			((keys[17] & 0x7F) << 23) |
+			((keys[16] & 0x7F) << 16) |
+			((keys[15] & 0x7F) << 9) |
+			((keys[14] & 0x7F) << 2) |
+			((keys[13] & 0x7F) >> 5);
 
-// 			CL[5] =
-// 			((keys[22] & 0x3F) << 26)
-// 			((keys[21] & 0x7F) << 19) |
-// 			((keys[20] & 0x7F) << 12) |
-// 			((keys[19] & 0x7F) << 5) |
-// 			((keys[18] & 0x7F) >> 2);
+			CL[5] =
+			((keys[22] & 0x3F) << 26) |
+			((keys[21] & 0x7F) << 19) |
+			((keys[20] & 0x7F) << 12) |
+			((keys[19] & 0x7F) << 5) |
+			((keys[18] & 0x7F) >> 2);
 
-// 			CL[6] =
-// 			((keys[27] & 0x07) << 29) |
-// 			((keys[26] & 0x7F) << 22) |
-// 			((keys[25] & 0x7F) << 15) |
-// 			((keys[24] & 0x7F) << 8) |
-// 			((keys[23] & 0x7F) << 1) |
-// 			((keys[22] & 0x7F) >> 6);
+			CL[6] =
+			((keys[27] & 0x07) << 29) |
+			((keys[26] & 0x7F) << 22) |
+			((keys[25] & 0x7F) << 15) |
+			((keys[24] & 0x7F) << 8) |
+			((keys[23] & 0x7F) << 1) |
+			((keys[22] & 0x7F) >> 6);
 
-// 			CL[7] =
-// 			((keys[30] & 0x7F) << 18) |
-// 			((keys[29] & 0x7F) << 11) |
-// 			((keys[28] & 0x7F) << 4) |
-// 			((keys[27] & 0x7F) >> 3);
+			CL[7] =
+			((keys[30] & 0x7F) << 18) |
+			((keys[29] & 0x7F) << 11) |
+			((keys[28] & 0x7F) << 4) |
+			((keys[27] & 0x7F) >> 3);
 
-// 			uint32_t meta = 0x40;
-// 			meta = meta << 24;
-// 			CL[7] |= meta;
-// 		}
-// 		else if (numProcessed == 24) {
+			uint32_t meta = 0x40;
+			meta = meta << 24;
+			CL[7] |= meta;
+		}
+		else if (numProcessed == 24) {
+			CL[1] =
+			((keys[3] & 0x1F) << 27) |
+			((keys[2] & 0x1FF) << 18) |
+			((keys[1] & 0x1FF) << 9) |
+			((keys[0] & 0x1FF));
 
-// 			CL[1] =
-// 			((keys[3] & 0x1F) << 27) |
-// 			((keys[2] & 0x1FF) << 18) |
-// 			((keys[1] & 0x1FF) << 9) |
-// 			((keys[0] & 0x1FF));
+			CL[2] =
+			((keys[7] & 0x1) << 31) |
+			((keys[6] & 0x1FF) << 22) |
+			((keys[5] & 0x1FF) << 13) |
+			((keys[4] & 0x1FF) << 4) |
+			((keys[3] & 0x1FF) >> 5);
 
-// 			CL[2] =
-// 			((keys[7] & 0x1) << 31) |
-// 			((keys[6] & 0x1FF) << 22) |
-// 			((keys[5] & 0x1FF) << 13) |
-// 			((keys[4] & 0x1FF) << 4) |
-// 			((keys[3] & 0x1FF) >> 5)
+			CL[3] =
+			((keys[10] & 0x3F) << 26) |
+			((keys[9] & 0x1FF) << 17) |
+			((keys[8] & 0x1FF) << 8) |
+			((keys[7] & 0x1FF) >> 1);
 
-// 			CL[3] =
-// 			((keys[10] & 0x3F) << 26) |
-// 			((keys[9] & 0x1FF) << 17) |
-// 			((keys[8] & 0x1FF) << 8) |
-// 			((keys[7] & 0x1FF) >> 1);
+			CL[4] =
+			((keys[14] & 0x3) << 30) |
+			((keys[13] & 0x1FF) << 21) |
+			((keys[12] & 0x1FF) << 12) |
+			((keys[11] & 0x1FF) << 3) |
+			((keys[10] & 0x1FF) >> 6);
 
-// 			CL[4] =
-// 			((keys[14] & 0x3) << 30) |
-// 			((keys[13] & 0x1FF) << 21) |
-// 			((keys[12] & 0x1FF) << 12) |
-// 			((keys[11] & 0x1FF) << 3) |
-// 			((keys[10] & 0x1FF) >> 6);
+			CL[5] =
+			((keys[17] & 0x7F) << 25) |
+			((keys[16] & 0x1FF) << 16) |
+			((keys[15] & 0x1FF) << 7) |
+			((keys[14] & 0x1FF) >> 2);
 
-// 			CL[5] =
-// 			((keys[17] & 0x7F) << 25) |
-// 			((keys[16] & 0x1FF) << 16) |
-// 			((keys[15] & 0x1FF) << 7) |
-// 			((keys[14] & 0x1FF) >> 2);
+			CL[6] =
+			((keys[21] & 0x7) << 29) |
+			((keys[20] & 0x1FF) << 20) |
+			((keys[19] & 0x1FF) << 11) |
+			((keys[18] & 0x1FF) << 2) |
+			((keys[17] & 0x1FF) >> 7);
 
-// 			CL[6] =
-// 			((keys[21] & 0x7) << 29) |
-// 			((keys[20] & 0x1FF) << 20) |
-// 			((keys[19] & 0x1FF) << 11) |
-// 			((keys[18] & 0x1FF) << 2) |
-// 			((keys[17] & 0x1FF) >> 7);
+			CL[7] =
+			((keys[23] & 0x1FF) << 15) |
+			((keys[22] & 0x1FF) << 6) |
+			((keys[21] & 0x1FF) >> 3);
 
-// 			CL[7] =
-// 			((keys[23] & 0x1FF) << 15) |
-// 			((keys[22] & 0x1FF) << 6) |
-// 			((keys[21] & 0x1FF) >> 3);
+			uint32_t meta = 0x30;
+			meta = meta << 24;
+			CL[7] |= meta;
+		}
+		else if (numProcessed == 15) {
+			CL[1] =
+			((keys[2] & 0xF) << 28) |
+			((keys[1] & 0x3FFF) << 14) |
+			((keys[0] & 0x3FFF));
 
-// 			uint32_t meta = 0x30;
-// 			meta = meta << 24;
-// 			CL[7] |= meta;
-// 		}
-// 		else if (numProcessed == 15) {
+			CL[2] =
+			((keys[4] & 0xFF) << 24) |
+			((keys[3] & 0x3FFF) << 10) |
+			((keys[2] & 0x3FFF) >> 4);
 
-// 			CL[1] =
-// 			((keys[2] & 0xF) << 28) |
-// 			((keys[1] & 0x3FFF) << 14) |
-// 			((keys[0] & 0x3FFF));
+			CL[3] =
+			((keys[6] & 0x3FFF) << 20) |
+			((keys[5] & 0x3FFF) << 6) |
+			((keys[4] & 0x3FFF) >> 8);
 
-// 			CL[2] =
-// 			((keys[4] & 0xFF) << 24) |
-// 			((keys[3] & 0x3FFF) << 10) |
-// 			((keys[2] & 0x3FFF) >> 4);
+			CL[4] =
+			((keys[9] & 0x3) << 30) |
+			((keys[8] & 0x3FFF) << 16) |
+			((keys[7] & 0x3FFF) << 2) |
+			((keys[6] & 0x3FFF) >> 12);
 
-// 			CL[3] =
-// 			((keys[6] & 0x3FFF) << 20)
-// 			((keys[5] & 0x3FFF) << 6) |
-// 			((keys[4] & 0x3FFF) >> 8);
+			CL[5] =
+			((keys[11] & 0x3F) << 26) |
+			((keys[10] & 0x3FFF) << 12) |
+			((keys[9] & 0x3FFF) >> 2);
 
-// 			CL[4] =
-// 			((keys[9] & 0x3) << 30) |
-// 			((keys[8] & 0x3FFF) << 16) |
-// 			((keys[7] & 0x3FFF) << 2) |
-// 			((keys[6] & 0x3FFF) >> 12);
+			CL[6] =
+			((keys[13] & 0x3FF) << 22) |
+			((keys[12] & 0x3FFF) << 8) |
+			((keys[11] & 0x3FFF) >> 6);
 
-// 			CL[5] =
-// 			((keys[11] & 0x3F) << 26) |
-// 			((keys[10] & 0x3FFF) << 12) |
-// 			((keys[9] & 0x3FFF) >> 2);
+			CL[7] =
+			((keys[14] & 0x3FFF) << 4) |
+			((keys[13] & 0x3FFF) >> 10);
 
-// 			CL[6] =
-// 			((keys[13] & 0x3FF) << 22) |
-// 			((keys[12] & 0x3FFF) << 8) |
-// 			((keys[11] & 0x3FFF) >> 6);
+			uint32_t meta = 0x20;
+			meta = meta << 24;
+			CL[7] |= meta;
+		}
+		else {
+			CL[1] = ((keys[1] & 0x1) << 31) | (keys[0] & 0x7FFFFFFF);
+			CL[2] = ((keys[2] & 0x3) << 30) | ((keys[1] & 0x7FFFFFFF) >> 1);
+			CL[3] = ((keys[3] & 0x7) << 29) | ((keys[2] & 0x7FFFFFFF) >> 2);
+			CL[4] = ((keys[4] & 0xF) << 28) | ((keys[3] & 0x7FFFFFFF) >> 3);
+			CL[5] = ((keys[5] & 0x1F) << 27) | ((keys[4] & 0x7FFFFFFF) >> 4);
+			CL[6] = ((keys[6] & 0x3F) << 26) | ((keys[5] & 0x7FFFFFFF) >> 5);
+			CL[7] = ((keys[6] & 0x7FFFFFFF) >> 6);
 
-// 			CL[7] =
-// 			((keys[14] & 0x3FFF) << 4) |
-// 			((keys[13] & 0x3FFF) >> 10);
+			uint32_t meta = numProcessed;
+			meta = meta << 26;
+			CL[7] |= meta;
+		}
 
-// 			uint32_t meta = 0x20;
-// 			meta = meta << 24;
-// 			CL[7] |= meta;
-// 		}
-// 		else {
-// 			CL[1] = (keys[0] & 0x7FFFFFFF);
-// 			CL[2] = (keys[1] & 0x7FFFFFFF);
-// 			CL[3] = (keys[2] & 0x7FFFFFFF);
-// 			CL[4] = (keys[3] & 0x7FFFFFFF);
-// 			CL[5] = (keys[4] & 0x7FFFFFFF);
-// 			CL[6] = (keys[5] & 0x7FFFFFFF);
-// 			CL[7] = (keys[6] & 0x7FFFFFFF);
+		for (uint32_t k = 0; k < 8; k++) {
+			compressedColumn[numWords++] = CL[k];
+		}
+	}
 
-// 			uint32_t meta = 0x80;
-// 			meta = meta << 24;
-// 			CL[7] |= meta;
-// 		}
-
-// 		for (uint32_t k = 0; k < 8; k++) {
-// 			compressed_column[numWords++] = CL[k];
-// 		}
-// 	}
-
-// 	return numWords;
-// }
+	return numWords;
+}
 
 #endif

@@ -22,8 +22,8 @@
 
 using namespace std;
 
-#define VALUE_TO_INT_SCALER 0x00800000
 #define NUM_VALUES_PER_LINE 16
+#define VALUE_TO_INT_SCALER 9
 
 int main(int argc, char* argv[]) {
 
@@ -41,10 +41,10 @@ int main(int argc, char* argv[]) {
 	}
 
 	uint32_t stepSizeShifter = 3;
-	uint32_t numEpochs = 10;
+	uint32_t numEpochs = 2;
 
 	// Do SCD
-	scd scd_app(VALUE_TO_INT_SCALER);
+	scd scd_app(0);
 
 	// scd_app.load_libsvm_data(pathToDataset, numSamples, numFeatures);
 	// scd_app.a_normalize(0, 'c');
@@ -58,20 +58,53 @@ int main(int argc, char* argv[]) {
 	// scd_app.float_linreg_SGD(NULL, numEpochs, 100, 1.0/(1 << 12));
 
 	// scd_app.float_linreg_SCD(NULL, numEpochs, numSamples, 1.0/(1 << stepSizeShifter));
-	// scd_app.float_linreg_SCD(NULL, numEpochs, 1024, 1.0/(1 << stepSizeShifter));
+	scd_app.float_linreg_SCD(NULL, numEpochs, 1000, 1.0/(1 << stepSizeShifter));
 
-	scd_app.AVX_float_linreg_SCD(NULL, numEpochs, numSamples, 1.0/(1 << stepSizeShifter));
-	scd_app.AVX_float_linreg_SCD(NULL, numEpochs, 1024, 1.0/(1 << stepSizeShifter));
+	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, numSamples, 1.0/(1 << stepSizeShifter));
+	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, 1024, 1.0/(1 << stepSizeShifter));
 
-	scd_app.AVXmulti_float_linreg_SCD(NULL, numEpochs, 1024, 1.0/(1 << stepSizeShifter));
+	// scd_app.AVXmulti_float_linreg_SCD(NULL, numEpochs, 1024, 1.0/(1 << stepSizeShifter));
+
+	// scd_app.float_linreg_FSCD(NULL, numEpochs, 1024, 1.0/(1 << stepSizeShifter), 1);
+
+
+
+	float compressionRate = scd_app.compress_a(VALUE_TO_INT_SCALER);
+	cout << "compressionRate: " << compressionRate << endl;
+
+	scd_app.compressed_linreg_SCD(NULL, numEpochs, 1024, 1.0/(1 << stepSizeShifter), VALUE_TO_INT_SCALER);
+
+
+
+
+
+	// uint32_t* compressedColumn = (uint32_t*)malloc((scd_app.numSamples + (8 - scd_app.numSamples%8))*sizeof(uint32_t));
+	// cout << "beforeCompressionSize: " << scd_app.numSamples << endl;
+	// uint32_t afterCompressionSize = scd_app.compress_column(scd_app.a[0], compressedColumn, VALUE_TO_INT_SCALER);
+	// cout << "afterCompressionSize: " << afterCompressionSize << endl;
+
+	// float* decompressedColumn = (float*)malloc(scd_app.numSamples*sizeof(float));
+	// uint32_t afterDecompressionSize = scd_app.decompress_column(compressedColumn, afterCompressionSize, decompressedColumn, VALUE_TO_INT_SCALER);
+
+	// cout << "afterDecompressionSize: " << afterDecompressionSize << endl;
+
+	// for (uint32_t i = 0; i < 20; i++) {
+	// 	cout << "scd_app.a[0][" << i << "]: " << scd_app.a[0][i] << endl;
+	// 	cout << "decompressedColumn[" << i << "]: " << decompressedColumn[i] << endl;
+	// }
+
+	// free(compressedColumn);
+	// free(decompressedColumn);
 
 
 
 	// for (uint32_t i = 1; i < 10; i++) {
 	// 	cout << scd_app.a[1][i] << endl;
-	// 	cout << (int)(scd_app.a[1][i]*VALUE_TO_INT_SCALER) << endl;
-	// 	cout << "delta: " << (int)(scd_app.a[1][i]*VALUE_TO_INT_SCALER) - (int)(scd_app.a[1][i-1]*VALUE_TO_INT_SCALER) << endl;
+	// 	cout << (int)(scd_app.a[1][i]*(1 << VALUE_TO_INT_SCALER)) << endl;
+	// 	cout << "delta: " << (int)(scd_app.a[1][i]*(1 << VALUE_TO_INT_SCALER)) - (int)(scd_app.a[1][i-1]*(1 << VALUE_TO_INT_SCALER)) << endl;
 	// }
+
+
 
 	// ofstream f1("features.dat");
 	// f1 << scd_app.numSamples << " " << scd_app.numFeatures << endl;
