@@ -54,16 +54,16 @@ signal adder_tree_result_valid : std_logic;
 signal adder_tree_result : std_logic_vector(31 downto 0);
 
 signal internal_accumulation_count : integer;
-signal accumulation : signed(31 downto 0);
+signal accumulation : signed(47 downto 0);
 
 signal valid_pulse_counter : integer;
 
 signal internal_result_valid : std_logic_vector(CONVERSION_LATENCY downto 0);
-signal internal_result : signed(31 downto 0);
+signal internal_result : signed(47 downto 0);
 
-component fp_converter_arria10
+component fp_converter48_arria10
     port (
-        a      : in  std_logic_vector(31 downto 0) := (others => '0'); --      a.a
+        a      : in  std_logic_vector(47 downto 0) := (others => '0'); --      a.a
         areset : in  std_logic                     := '0';             -- areset.reset
         clk    : in  std_logic                     := '0';             --    clk.clk
         q      : out std_logic_vector(31 downto 0)                     --      q.q
@@ -141,7 +141,7 @@ port map (
 	result_valid => adder_tree_result_valid,
 	result => adder_tree_result);
 
-fp_converter_arria10_inst: fp_converter_arria10
+fp_converter_arria10_inst: fp_converter48_arria10
 port map(
 	a => std_logic_vector(internal_result),
 	areset => reset,

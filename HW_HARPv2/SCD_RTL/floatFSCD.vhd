@@ -45,6 +45,7 @@ port(
 	start : in std_logic;
 	done : out std_logic;
 
+	enable_staleness : in std_logic;
 	a_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	b_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	step_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
@@ -530,7 +531,7 @@ if clk'event and clk = '1' then
 				read_request_address <= std_logic_vector(unsigned(a_address) + iCOLUMN_OFFSET(ADDRESS_WIDTH-1 downto 0) + i_index);
 
 				if i_index = iBATCH_SIZE-1 then
-					new_column_read_allowed <= '0';
+					new_column_read_allowed <= enable_staleness;
 					i_index <= (others => '0');	
 					if feature_index = iNUMBER_OF_FEATURES-1 then
 						read_state <= B"00";

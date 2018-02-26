@@ -114,7 +114,7 @@ public:
 #endif
 
 	uint32_t copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize);
-	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
+	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness);
 };
 
 
@@ -426,9 +426,9 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 				for (uint32_t i = 0; i < minibatchSize; i++) {
 					gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
 				}
-				// cout << "gradient: " << gradient << endl;
+				cout << "gradient: " << gradient << endl;
 				float step = stepSize*(gradient/minibatchSize);
-				// cout << "step: " << step << endl;
+				cout << "step: " << step << endl;
 				x[m*numFeatures + j] -= step;
 
 				for (uint32_t i = 0; i < minibatchSize; i++) {
@@ -774,7 +774,7 @@ uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minib
 	return address32;
 }
 
-void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize) {
+void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness) {
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
@@ -807,6 +807,8 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 	temp_reg = 0;
 	temp_reg = ((uint64_t)numEpochs << 32) | ((uint64_t)*tempStepSizeAddr);
 	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp_reg);
+	temp_reg = (uint64_t)enableStaleness;
+	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp_reg);
 
 	interfaceFPGA->doTransaction();
 

@@ -226,6 +226,7 @@ port(
 	start : in std_logic;
 	done : out std_logic;
 
+	enable_staleness : in std_logic;
 	a_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	b_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	step_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
@@ -313,6 +314,7 @@ port map (
 	start => parti_start,
 	done => done,
 
+	enable_staleness => config5(0),
 	a_address => a_address,
 	b_address => b_address,
 	step_address => step_address,
