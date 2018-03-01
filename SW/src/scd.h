@@ -27,7 +27,7 @@ public:
 	float* b;	// Data set labels vector: numSamples
 
 	uint32_t** compressed_a;
-	uint32_t* compressed_a_sizes;
+	uint32_t** compressed_a_sizes;
 
 	uint32_t numFeatures;
 	uint32_t numSamples;
@@ -68,6 +68,8 @@ public:
 
 		a = NULL;
 		b = NULL;
+
+		compressed_a = NULL;
 	}
 	~scd() {
 		if (gotFPGA == 1)
@@ -82,14 +84,13 @@ public:
 		if (b != NULL)
 			free(b);
 
-		if (compressed_a_sizes != NULL)
-			free(compressed_a_sizes);
-
 		if (compressed_a != NULL) {
 			for (uint32_t j = 0; j < numFeatures; j++) {
 				free(compressed_a[j]);
+				free(compressed_a_sizes[j]);
 			}
 			free(compressed_a);
+			free(compressed_a_sizes);
 		}
 	}
 
@@ -111,7 +112,7 @@ public:
 	// Normalization and data shaping
 	void a_normalize(char toMinus1_1, char rowOrColumnWise);
 	void b_normalize(char toMinus1_1, char binarize_b, float b_toBinarizeTo);
-	float compress_a(uint32_t toIntegerScaler);
+	float compress_a(uint32_t minibatchSize, uint32_t toIntegerScaler);
 
 	float calculate_loss(float* x);
 
@@ -125,10 +126,12 @@ public:
 
 
 	uint32_t copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize);
-	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness);
+	uint32_t copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize);
+	void linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useCompressed, uint32_t toIntegerScaler);
+	
 
 	uint32_t decompress_column(uint32_t* compressedColumn, uint32_t inNumWords, float* decompressedColumn, uint32_t toIntegerScaler);
-	uint32_t compress_column(float* originalColumn, uint32_t* compressedColumn, uint32_t toIntegerScaler);
+	uint32_t compress_column(float* originalColumn, uint32_t inNumWords, uint32_t* compressedColumn, uint32_t toIntegerScaler);
 };
 
 void scd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures) {
@@ -146,9 +149,6 @@ void scd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _num
 	if (b != NULL)
 		free(b);
 	b = (float*)aligned_alloc(64, numSamples*sizeof(float));
-
-	compressed_a_sizes = (uint32_t*)aligned_alloc(64, numFeatures*sizeof(uint32_t));
-	memset(compressed_a_sizes, 0, numFeatures*sizeof(uint32_t));
 
 	string line;
 	ifstream f(pathToFile);
@@ -209,9 +209,6 @@ void scd::generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, c
 	if (b != NULL)
 		free(b);
 	b = (float*)aligned_alloc(64, numSamples*sizeof(float));
-
-	compressed_a_sizes = (uint32_t*)aligned_alloc(64, numFeatures*sizeof(uint32_t));
-	memset(compressed_a_sizes, 0, numFeatures*sizeof(uint32_t));
 
 	srand(7);
 	float* x = (float*)malloc(numFeatures*sizeof(float));
@@ -338,17 +335,38 @@ void scd::b_normalize(char toMinus1_1, char binarize_b, float b_toBinarizeTo) {
 	}
 }
 
-float scd::compress_a(uint32_t toIntegerScaler) {
-	uint32_t numWordsAfterCompression = 0;
+float scd::compress_a(uint32_t minibatchSize, uint32_t toIntegerScaler) {
+	uint32_t numMinibatches = numSamples/minibatchSize;
+	cout << "numMinibatches: " << numMinibatches << endl;
+	uint32_t rest = numSamples - numMinibatches*minibatchSize;
+	cout << "rest: " << rest << endl;
 
 	compressed_a = (uint32_t**)malloc(numFeatures*sizeof(uint32_t*));
+	compressed_a_sizes = (uint32_t**)malloc(numFeatures*sizeof(uint32_t*));
 	for (uint32_t j = 0; j < numFeatures; j++) {
-		compressed_a[j] = (uint32_t*)aligned_alloc(64, (numSamples + (8 - numSamples%8))*sizeof(uint32_t));
-		compressed_a_sizes[j] = compress_column(a[j], compressed_a[j], toIntegerScaler);
-
-		numWordsAfterCompression += compressed_a_sizes[j];
+		compressed_a[j] = (uint32_t*)aligned_alloc(64, numSamples*sizeof(uint32_t));
+		compressed_a_sizes[j] = (uint32_t*)aligned_alloc(64, numMinibatches*sizeof(uint32_t));
 	}
-	float compressionRate = (float)(numSamples*numFeatures)/(float)numWordsAfterCompression;
+
+	for (uint32_t m = 0; m < numMinibatches; m++) {
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			uint32_t compressed_a_offset = 0;
+			if (m > 0)
+				compressed_a_offset = compressed_a_sizes[j][m-1];
+			uint32_t numWordsInBatch = compress_column(a[j] + m*minibatchSize, minibatchSize, compressed_a[j] + compressed_a_offset, toIntegerScaler);
+			compressed_a_sizes[j][m] = compressed_a_offset + numWordsInBatch;
+
+			cout << "compressed_a_sizes[" << j << "][" << m << "]: " << numWordsInBatch << endl;
+		}
+	}
+
+	uint32_t numWordsAfterCompression = 0;
+	for (uint32_t j = 0; j < numFeatures; j++) {
+		
+		numWordsAfterCompression += compressed_a_sizes[j][numMinibatches-1];
+	}
+
+	float compressionRate = (float)(numMinibatches*minibatchSize*numFeatures)/(float)numWordsAfterCompression;
 
 	return compressionRate;
 }
@@ -457,7 +475,14 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 				float gradient = 0;
 				for (uint32_t i = 0; i < minibatchSize; i++) {
+					// cout << "res - b: " << residual[m*minibatchSize + i] - b[m*minibatchSize + i] << endl;
+					// cout << "a: " << a[j][m*minibatchSize + i] << endl;
+
 					gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
+
+					// if ((i+1)%16 == 0) {
+					// 	cout << "gradient: " << gradient << endl;
+					// }
 				}
 				// cout << "gradient: " << gradient << endl;
 				float step = stepSize*(gradient/minibatchSize);
@@ -466,7 +491,6 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 				for (uint32_t i = 0; i < minibatchSize; i++) {
 					// if (i%16 == 0) {
-					// 	cout << "a[j][m*minibatchSize + i]: " << a[j][m*minibatchSize + i] << endl;
 					// 	cout << "step*a[j][m*minibatchSize + i]: " << step*a[j][m*minibatchSize + i] << endl;
 					// }
 
@@ -528,17 +552,9 @@ void scd::compressed_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t m
 
 	cout << "Initial loss: " << calculate_loss(x_end) << endl;
 
-	float* decompressedColumn = (float*)aligned_alloc(64, numSamples*sizeof(float));
-	// for (uint32_t j = 0; j < numFeatures; j++) {
-	// 	cout << "compressed_a_sizes[" << j << "]: " <<  compressed_a_sizes[j] << endl;
-	// }
+	float* decompressedColumn = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
 
 	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
-
-		uint32_t compressedOffsets[numFeatures];
-		uint32_t decompressedOffsets[numFeatures];
-		memset(compressedOffsets, 0, numFeatures*sizeof(uint32_t));
-		memset(decompressedOffsets, 0, numFeatures*sizeof(uint32_t));
 
 		double start = get_time();
 
@@ -546,44 +562,38 @@ void scd::compressed_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t m
 			
 			for (uint32_t j = 0; j < numFeatures; j++) {
 
-				if (compressed_a_sizes[j] > compressedOffsets[j]) {
+				uint32_t compressed_a_offset = 0;
+				if (m > 0)
+					compressed_a_offset = compressed_a_sizes[j][m-1];
 
-					uint32_t compressedMiniBatchSize;
-					if (m == numMinibatches-1) {
-						compressedMiniBatchSize = compressed_a_sizes[j] - compressedOffsets[j];
-					}
-					else {
-						compressedMiniBatchSize = compressed_a_sizes[j]/numMinibatches;
-						if (compressedMiniBatchSize%8 > 0)
-							compressedMiniBatchSize += (8 - compressedMiniBatchSize%8);
-					}
+				uint32_t decompressedMiniBatchSize = decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, decompressedColumn, toIntegerScaler);
 
-					// cout << "compressedMiniBatchSize: " <<  compressedMiniBatchSize << endl;
-					// cout << "compressedOffsets[" << j << "]: " <<  compressedOffsets[j] << endl;
-
-					uint32_t decompressedMiniBatchSize = decompress_column(compressed_a[j] + compressedOffsets[j], compressedMiniBatchSize, decompressedColumn, toIntegerScaler);
-
-					// cout << "decompressedMiniBatchSize: " <<  decompressedMiniBatchSize << endl;
-					// cout << "decompressedOffsets[0]: " <<  decompressedOffsets[j] << endl;
-
-					float gradient = 0;
-					for (uint32_t i = 0; i < decompressedMiniBatchSize; i++) {
-						gradient += (residual[decompressedOffsets[j] + i] - b[decompressedOffsets[j] + i])*decompressedColumn[i];
-					}
-					
-					float step = stepSize*(gradient/decompressedMiniBatchSize);
-					x[m*numFeatures + j] -= step;
-
-					for (uint32_t i = 0; i < decompressedMiniBatchSize; i++) {
-						residual[decompressedOffsets[j] + i] -= step*decompressedColumn[i];
-					}
-
-					compressedOffsets[j] += compressedMiniBatchSize;
-					decompressedOffsets[j] += decompressedMiniBatchSize;
-
+				if (decompressedMiniBatchSize != minibatchSize) {
+					cout << "m: " << m << endl;
+					cout << "j: " << j << endl;
+					cout << "compressed_a_offset: " << compressed_a_offset << endl;
+					cout << "compressed_a_sizes[j][m]: " << compressed_a_sizes[j][m] << endl;
+					cout << "minibatchSize: " <<  minibatchSize << endl;
+					cout << "decompressedMiniBatchSize: " <<  decompressedMiniBatchSize << endl;
 				}
 
-				// cout << j << endl;
+				// cout << "-------------------------------" << endl;
+
+				float gradient = 0;
+				for (uint32_t i = 0; i < minibatchSize; i++) {
+					// cout << "res - b: " << residual[m*minibatchSize + i] - b[m*minibatchSize + i] << endl;
+					// cout << "a: " << a[j][m*minibatchSize + i] << endl;
+
+					gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*decompressedColumn[i];
+				}
+				// cout << "gradient: " << gradient << endl;
+				float step = stepSize*(gradient/minibatchSize);
+				// cout << "step: " << step << endl;
+				x[m*numFeatures + j] -= step;
+
+				for (uint32_t i = 0; i < minibatchSize; i++) {
+					residual[m*minibatchSize + i] -= step*decompressedColumn[i];
+				}
 			}
 		}
 
@@ -891,16 +901,25 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32
 uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize) {
 	uint32_t address32 = 0;
 
+	// Space for offsets
+	address32 += numFeatures;
+	if (address32%numValuesPerLine > 0)
+		address32 += (numValuesPerLine - address32%numValuesPerLine);
+
+	// Write b
 	b_address = address32/numValuesPerLine;
 	for (uint32_t i = 0; i < numMinibatches*minibatchSize; i++) {
 		interfaceFPGA->writeToMemoryFloat('i', b[i], address32++);
 	}
 	if (address32%numValuesPerLine > 0)
 		address32 += (numValuesPerLine - address32%numValuesPerLine);
-	uint32_t column_size = address32;
 
-	a_address = address32/numValuesPerLine;
+	// Write a
+	a_address = 0;
 	for (uint32_t j = 0; j < numFeatures; j++) {
+
+		interfaceFPGA->writeToMemory32('i', address32/numValuesPerLine, j);
+
 		for (uint32_t i = 0; i < numMinibatches*minibatchSize; i++) {
 			interfaceFPGA->writeToMemoryFloat('i', a[j][i], address32++);
 		}
@@ -909,19 +928,81 @@ uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minib
 	}
 
 	residual_address = address32/numValuesPerLine;
+
+	uint32_t column_size = numMinibatches*minibatchSize + (numValuesPerLine - (numMinibatches*minibatchSize)%numValuesPerLine);
 	address32 += column_size;
 	step_address = address32/numValuesPerLine;
 
 	return address32;
 }
 
-void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness) {
+uint32_t scd::copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize) {
+	uint32_t address32 = 0;
+
+	// Space for offsets
+	address32 += numFeatures;
+	if (address32%numValuesPerLine > 0)
+		address32 += (numValuesPerLine - address32%numValuesPerLine);
+
+	// Write b
+	b_address = address32/numValuesPerLine;
+	for (uint32_t i = 0; i < numMinibatches*minibatchSize; i++) {
+		interfaceFPGA->writeToMemoryFloat('i', b[i], address32++);
+	}
+	if (address32%numValuesPerLine > 0)
+		address32 += (numValuesPerLine - address32%numValuesPerLine);
+
+	// Write a
+	a_address = 0;
+	for (uint32_t j = 0; j < numFeatures; j++) {
+
+		interfaceFPGA->writeToMemory32('i', address32/numValuesPerLine, j);
+
+		for (uint32_t m = 0; m < numMinibatches; m++) {
+
+			uint32_t compressed_a_offset = 0;
+			if (m > 0)
+				compressed_a_offset = compressed_a_sizes[j][m-1];
+
+			uint32_t numWordsInBatch = compressed_a_sizes[j][m] - compressed_a_offset;
+
+			// Size for the current compressed mini batch, +1 for the first line which contains how many further lines to read
+			interfaceFPGA->writeToMemory32('i', numWordsInBatch/numValuesPerLine + (numWordsInBatch%numValuesPerLine > 0) + 1, address32++);
+			if (address32%numValuesPerLine > 0)
+				address32 += (numValuesPerLine - address32%numValuesPerLine);
+
+			for (uint32_t i = 0; i < numWordsInBatch; i++) {
+				interfaceFPGA->writeToMemory32('i', compressed_a[j][compressed_a_offset + i], address32++);
+			}
+			if (address32%numValuesPerLine > 0) {
+				uint32_t padding = (numValuesPerLine - address32%numValuesPerLine);
+				for (uint32_t i = 0; i < padding; i++) {
+					interfaceFPGA->writeToMemory32('i', 0, address32++);
+				}
+			}
+		}
+	}
+
+	residual_address = address32/numValuesPerLine;
+
+	uint32_t column_size = numMinibatches*minibatchSize + (numValuesPerLine - (numMinibatches*minibatchSize)%numValuesPerLine);
+	address32 += column_size;
+	step_address = address32/numValuesPerLine;
+
+	return address32;
+}
+
+void scd::linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useCompressed, uint32_t toIntegerScaler) {
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
 	cout << "rest: " << rest << endl;
 
-	uint32_t address32 = copy_data_into_FPGA_memory(numMinibatches, minibatchSize);
+	uint32_t address32 = 0;
+	if (useCompressed == 0)
+		address32 = copy_data_into_FPGA_memory(numMinibatches, minibatchSize);
+	else
+		address32 = copy_compressed_data_into_FPGA_memory(numMinibatches, minibatchSize);
 
 	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
 	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
@@ -948,7 +1029,7 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 	temp_reg = 0;
 	temp_reg = ((uint64_t)numEpochs << 32) | ((uint64_t)*tempStepSizeAddr);
 	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp_reg);
-	temp_reg = (uint64_t)enableStaleness;
+	temp_reg = ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;
 	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp_reg);
 
 	interfaceFPGA->doTransaction();
@@ -986,6 +1067,7 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 	free(x);
 	free(x_end);
 }
+
 
 float scd::calculate_loss(float* x) {
 	float loss = 0;
@@ -1060,7 +1142,7 @@ uint32_t scd::decompress_column(uint32_t* compressedColumn, uint32_t inNumWords,
 			}
 		}
 		else if (meta == 0x30) {
-			int delta[24];
+			int delta[23];
 			delta[0] = (int)(CL[1] & 0x1FF);
 			delta[1] = (int)((CL[1] >> 9) & 0x1FF);
 			delta[2] = (int)((CL[1] >> 18) & 0x1FF);
@@ -1084,9 +1166,8 @@ uint32_t scd::decompress_column(uint32_t* compressedColumn, uint32_t inNumWords,
 			delta[20] = (int)((CL[6] >> 20) & 0x1FF);
 			delta[21] = (int)(((CL[7] & 0x3F) << 3) + (CL[6] >> 29));
 			delta[22] = (int)((CL[7] >> 6) & 0x1FF);
-			delta[23] = (int)((CL[7] >> 15) & 0x1FF);
 
-			for (uint32_t k = 0; k < 24; k++) {
+			for (uint32_t k = 0; k < 23; k++) {
 				if ((delta[k] >> 8) == 0x1) {
 					delta[k] = delta[k] - (1 << 9);
 					decompressedColumn[outNumWords++] = ((float)(base+delta[k]))/((float)(1 << toIntegerScaler));
@@ -1133,6 +1214,7 @@ uint32_t scd::decompress_column(uint32_t* compressedColumn, uint32_t inNumWords,
 			delta[6] = (int)((CL[7] & 0x1FFFFFF) << 6) + (CL[6] >> 26);
 
 			uint32_t numProcessed = meta >> 2;
+			// cout << "numProcessed: " << numProcessed << endl;
 
 			for (uint32_t k = 0; k < numProcessed; k++) {
 				if ((delta[k] >> 30) == 0x1) {
@@ -1148,15 +1230,15 @@ uint32_t scd::decompress_column(uint32_t* compressedColumn, uint32_t inNumWords,
 	return outNumWords;
 }
 
-uint32_t scd::compress_column(float* originalColumn, uint32_t* compressedColumn, uint32_t toIntegerScaler) {
-	// 0x40 31 7bit delta, 0x30 24 9bit delta, 0x20 15 14bit delta, 0x10 7 31-bit delta
+uint32_t scd::compress_column(float* originalColumn, uint32_t inNumWords, uint32_t* compressedColumn, uint32_t toIntegerScaler) {
+	// 0x40 31 7bit delta, 0x30 23 9bit delta, 0x20 15 14bit delta, 0x10 7 31-bit delta
 	uint32_t numWords = 0;
 
 	uint32_t CL[8];
   	uint32_t keys[31];
 
 	uint32_t numProcessed = 0;
-	for (uint32_t i = 0; i < numSamples; i=i+numProcessed+1) {
+	for (uint32_t i = 0; i < inNumWords; i=i+numProcessed+1) {
 		int base = (int)(originalColumn[i]*(1 << toIntegerScaler));
 
 		CL[0] = (uint32_t)base;
@@ -1165,15 +1247,18 @@ uint32_t scd::compress_column(float* originalColumn, uint32_t* compressedColumn,
 		uint32_t j = i + 1;
 		numProcessed = 0;
 
-		while (1) {
+		// cout << "------------------" << endl;
+		// cout << "j: " << j << endl;
+
+		while (j < inNumWords) {
 			int next = (int)(originalColumn[j]*(1 << toIntegerScaler));
 			int delta = next - base;
 
-			if (delta >= -64 && delta <= 63 && i+31 < numSamples && search_for >= 31)
+			if (delta >= -64 && delta <= 63 && i+31 < inNumWords && search_for >= 31)
 				search_for = 31;
-			else if (delta >= -256 && delta <= 255 && i+24 < numSamples && search_for >= 24)
-				search_for = 24;
-			else if (delta >= -8192 && delta <= 8191 && i+15 < numSamples && search_for >= 15)
+			else if (delta >= -256 && delta <= 255 && i+23 < inNumWords && search_for >= 23)
+				search_for = 23;
+			else if (delta >= -8192 && delta <= 8191 && i+15 < inNumWords && search_for >= 15)
 				search_for = 15;
 			else
 				search_for = 7;
@@ -1184,12 +1269,12 @@ uint32_t scd::compress_column(float* originalColumn, uint32_t* compressedColumn,
 				numProcessed = search_for;
 				break;
 			}
-			if (j == numSamples-1)
-				break;
-			else
-				j++;
+			j++;
 		}
 
+		// cout << "inNumWords: " << inNumWords << endl;
+		// cout << "i: " << i << endl;
+		// cout << "j: " << j << endl;
 		// cout << "numProcessed: " << numProcessed << endl;
 
 		if (numProcessed == 31) {
@@ -1248,7 +1333,7 @@ uint32_t scd::compress_column(float* originalColumn, uint32_t* compressedColumn,
 			meta = meta << 24;
 			CL[7] |= meta;
 		}
-		else if (numProcessed == 24) {
+		else if (numProcessed == 23) {
 			CL[1] =
 			((keys[3] & 0x1F) << 27) |
 			((keys[2] & 0x1FF) << 18) |
@@ -1289,7 +1374,6 @@ uint32_t scd::compress_column(float* originalColumn, uint32_t* compressedColumn,
 			((keys[17] & 0x1FF) >> 7);
 
 			CL[7] =
-			((keys[23] & 0x1FF) << 15) |
 			((keys[22] & 0x1FF) << 6) |
 			((keys[21] & 0x1FF) >> 3);
 

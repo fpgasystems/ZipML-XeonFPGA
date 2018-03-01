@@ -31,6 +31,7 @@ port (
 	in_trigger : in std_logic;
 	in_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	in_data : in std_logic_vector(511 downto 0);
+	buffer_free_count : out std_logic_vector(31 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 	out_valid : out std_logic);
 end reorder;
@@ -63,6 +64,8 @@ port(
 end component;
 
 begin
+
+buffer_free_count <= std_logic_vector( to_unsigned(BUFFER_DEPTH, 32) - (NumberOfReceivedReads - NumberOfSentReads) );
 
 reorder_buffer: simple_dual_port_ram_single_clock
 generic map (

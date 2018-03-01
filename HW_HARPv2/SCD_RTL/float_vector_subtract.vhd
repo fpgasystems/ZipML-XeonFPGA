@@ -43,6 +43,10 @@ signal internal_result : result_type;
 
 signal internal_trigger : std_logic_vector(TOTAL_LATENCY-1 downto 0);
 
+type float_vector_type is array(15 downto 0) of std_logic_vector(31 downto 0);
+signal vector1_monitor : float_vector_type;
+signal vector2_monitor : float_vector_type;
+
 component fp_subtract_arria10
 	port (
 		a      : in  std_logic_vector(31 downto 0) := (others => '0'); --      a.a
@@ -77,6 +81,11 @@ if clk'event and clk = '1' then
 	internal_trigger(0) <= trigger;
 	for k in 1 to TOTAL_LATENCY-1 loop
 		internal_trigger(k) <= internal_trigger(k-1);
+	end loop;
+
+	for k in 0 to 15 loop
+		vector1_monitor(k) <= vector1(32*(k+1)-1 downto 32*k);
+		vector2_monitor(k) <= vector2(32*(k+1)-1 downto 32*k);
 	end loop;
 end if;
 end process;

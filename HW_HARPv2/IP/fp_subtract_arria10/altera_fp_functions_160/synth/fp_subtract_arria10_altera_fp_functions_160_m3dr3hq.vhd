@@ -16,7 +16,7 @@
 -- ---------------------------------------------------------------------------
 
 -- VHDL created from fp_subtract_arria10_altera_fp_functions_160_m3dr3hq
--- VHDL created on Sun Oct 15 17:48:44 2017
+-- VHDL created on Wed Feb 28 18:47:41 2018
 
 
 library IEEE;

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <deploy
- date="2017.10.15.17:48:44"
- outputDirectory="/home/kkara/ethz_home/Projects/_doppioDB/fpga/operators/sgd/IP/fp_subtract_arria10/">
+ date="2018.02.28.18:47:41"
+ outputDirectory="/home/kkara/ethz_home/Projects/ZipML-XeonFPGA/HW_HARPv2/IP/fp_subtract_arria10/">
  <perimeter>
   <parameter
      name="AUTO_GENERATION_ID"
@@ -80,7 +80,7 @@
  </perimeter>
  <entity kind="fp_subtract_arria10" version="1.0" name="fp_subtract_arria10">
   <parameter name="AUTO_CLK_CLOCK_RATE" value="-1" />
-  <parameter name="AUTO_GENERATION_ID" value="1508082524" />
+  <parameter name="AUTO_GENERATION_ID" value="1519840060" />
   <parameter name="AUTO_DEVICE" value="10AS016C3U19E2LG" />
   <parameter name="AUTO_DEVICE_FAMILY" value="Arria 10" />
   <parameter name="AUTO_CLK_RESET_DOMAIN" value="-1" />
@@ -89,17 +89,17 @@
   <parameter name="AUTO_DEVICE_SPEEDGRADE" value="2" />
   <generatedFiles>
    <file
-       path="/home/kkara/ethz_home/Projects/_doppioDB/fpga/operators/sgd/IP/fp_subtract_arria10/synth/fp_subtract_arria10.v"
+       path="/home/kkara/ethz_home/Projects/ZipML-XeonFPGA/HW_HARPv2/IP/fp_subtract_arria10/synth/fp_subtract_arria10.v"
        attributes="CONTAINS_INLINE_CONFIGURATION" />
   </generatedFiles>
   <childGeneratedFiles>
    <file
-       path="/home/kkara/ethz_home/Projects/_doppioDB/fpga/operators/sgd/IP/fp_subtract_arria10/synth/fp_subtract_arria10.v"
+       path="/home/kkara/ethz_home/Projects/ZipML-XeonFPGA/HW_HARPv2/IP/fp_subtract_arria10/synth/fp_subtract_arria10.v"
        attributes="CONTAINS_INLINE_CONFIGURATION" />
   </childGeneratedFiles>
   <sourceFiles>
    <file
-       path="/home/kkara/ethz_home/Projects/_doppioDB/fpga/operators/sgd/IP/fp_subtract_arria10.qsys" />
+       path="/home/kkara/ethz_home/Projects/ZipML-XeonFPGA/HW_HARPv2/IP/fp_subtract_arria10.qsys" />
   </sourceFiles>
   <childSourceFiles>
    <file
@@ -175,24 +175,24 @@
   <parameter name="exponent_width" value="23" />
   <generatedFiles>
    <file
-       path="/home/kkara/ethz_home/Projects/_doppioDB/fpga/operators/sgd/IP/fp_subtract_arria10/altera_fp_functions_160/synth/dspba_library_package.vhd"
+       path="/home/kkara/ethz_home/Projects/ZipML-XeonFPGA/HW_HARPv2/IP/fp_subtract_arria10/altera_fp_functions_160/synth/dspba_library_package.vhd"
        attributes="" />
    <file
-       path="/home/kkara/ethz_home/Projects/_doppioDB/fpga/operators/sgd/IP/fp_subtract_arria10/altera_fp_functions_160/synth/dspba_library.vhd"
+       path="/home/kkara/ethz_home/Projects/ZipML-XeonFPGA/HW_HARPv2/IP/fp_subtract_arria10/altera_fp_functions_160/synth/dspba_library.vhd"
        attributes="" />
    <file
-       path="/home/kkara/ethz_home/Projects/_doppioDB/fpga/operators/sgd/IP/fp_subtract_arria10/altera_fp_functions_160/synth/fp_subtract_arria10_altera_fp_functions_160_m3dr3hq.vhd"
+       path="/home/kkara/ethz_home/Projects/ZipML-XeonFPGA/HW_HARPv2/IP/fp_subtract_arria10/altera_fp_functions_160/synth/fp_subtract_arria10_altera_fp_functions_160_m3dr3hq.vhd"
        attributes="" />
   </generatedFiles>
   <childGeneratedFiles>
    <file
-       path="/home/kkara/ethz_home/Projects/_doppioDB/fpga/operators/sgd/IP/fp_subtract_arria10/altera_fp_functions_160/synth/dspba_library_package.vhd"
+       path="/home/kkara/ethz_home/Projects/ZipML-XeonFPGA/HW_HARPv2/IP/fp_subtract_arria10/altera_fp_functions_160/synth/dspba_library_package.vhd"
        attributes="" />
    <file
-       path="/home/kkara/ethz_home/Projects/_doppioDB/fpga/operators/sgd/IP/fp_subtract_arria10/altera_fp_functions_160/synth/dspba_library.vhd"
+       path="/home/kkara/ethz_home/Projects/ZipML-XeonFPGA/HW_HARPv2/IP/fp_subtract_arria10/altera_fp_functions_160/synth/dspba_library.vhd"
        attributes="" />
    <file
-       path="/home/kkara/ethz_home/Projects/_doppioDB/fpga/operators/sgd/IP/fp_subtract_arria10/altera_fp_functions_160/synth/fp_subtract_arria10_altera_fp_functions_160_m3dr3hq.vhd"
+       path="/home/kkara/ethz_home/Projects/ZipML-XeonFPGA/HW_HARPv2/IP/fp_subtract_arria10/altera_fp_functions_160/synth/fp_subtract_arria10_altera_fp_functions_160_m3dr3hq.vhd"
        attributes="" />
   </childGeneratedFiles>
   <sourceFiles>

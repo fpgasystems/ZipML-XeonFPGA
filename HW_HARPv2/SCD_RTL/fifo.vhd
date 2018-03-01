@@ -93,10 +93,11 @@ internal_count <= 	wpointer - rpointer when wpointer > rpointer else
 internal_empty <= 	'0' when internal_count > 0 else
 					'1';
 
+empty <= internal_empty;
+
 process(clk)
 begin
 if clk'event and clk = '1' then
-	empty <= internal_empty;
 	if internal_count < FIFO_DEPTH then
 		full <= '0';
 	else

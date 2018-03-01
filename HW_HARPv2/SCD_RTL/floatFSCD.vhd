@@ -45,6 +45,8 @@ port(
 	start : in std_logic;
 	done : out std_logic;
 
+	enable_decompression : in std_logic;
+	to_integer_scaler : in std_logic_vector(15 downto 0);
 	enable_staleness : in std_logic;
 	a_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	b_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
@@ -69,20 +71,11 @@ signal iNUMBER_OF_EPOCHS : unsigned(15 downto 0) := (others => '0');
 signal iNUMBER_OF_FEATURES : unsigned(31 downto 0) := (others => '0');
 signal iNUMBER_OF_BATCHES : unsigned(15 downto 0) := (others => '0');
 signal iBATCH_SIZE : unsigned(15 downto 0) := (others => '0');
-signal iBATCH_OFFSET : unsigned(31 downto 0) := (others => '0');
 signal write_iBATCH_OFFSET : unsigned(31 downto 0) := (others => '0');
-signal iCOLUMN_SIZE : unsigned(31 downto 0) := (others => '0');
-signal iCOLUMN_OFFSET : unsigned(63 downto 0) := (others => '0');
 
--- 0 read residual, 1 read b, 3 read a
-signal read_state : std_logic_vector(1 downto 0) := (others => '0');
-signal receive_state : std_logic_vector(1 downto 0) := (others => '0');
+signal finish_allowed : std_logic;
 signal completed_epochs : unsigned(15 downto 0);
 
-signal NumberOfRequestedReads : unsigned(31 downto 0) := (others => '0');
-signal residual_NumberOfRequestedReads : unsigned(31 downto 0) := (others => '0');
-signal b_NumberOfRequestedReads : unsigned(31 downto 0) := (others => '0');
-signal a_NumberOfRequestedReads : unsigned(31 downto 0) := (others => '0');
 signal NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
 signal residual_NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
 signal b_NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
@@ -91,30 +84,33 @@ signal residual_NumberOfWriteRequests : unsigned(31 downto 0) := (others => '0')
 signal step_NumberOfWriteRequests : unsigned(31 downto 0) := (others => '0');
 signal NumberOfWriteResponses : unsigned(31 downto 0) := (others => '0');
 
-signal feature_index : unsigned(31 downto 0) := (others => '0');
-signal feature_receive_index : unsigned(31 downto 0) := (others => '0');
-signal feature_update_index : unsigned(31 downto 0) := (others => '0');
-signal batch_index : unsigned(15 downto 0) := (others => '0');
-signal write_batch_index : unsigned(15 downto 0) := (others => '0');
-signal i_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 signal i_receive_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
+signal feature_update_index : unsigned(31 downto 0) := (others => '0');
+signal write_batch_index : unsigned(15 downto 0) := (others => '0');
 signal i_write_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 signal i_update_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 signal i_writeback_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 signal i_writerequest_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 
-signal new_column_read_allowed : std_logic;
+signal allowed_batch_to_read : std_logic_vector(15 downto 0);
 signal write_residual_back : std_logic;
-signal finish_allowed : std_logic;
+
+signal epoch_start : std_logic;
+signal response_residual_valid : std_logic;
+signal response_b_valid : std_logic;
+signal response_a_valid : std_logic;
+signal response_index : std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
+signal response_data : std_logic_vector(511 downto 0);
+signal a_data : std_logic_vector(511 downto 0);
+
+signal decompressor_in_valid : std_logic;
+signal decompressor_out_valid : std_logic;
+signal decompressor_out_data : std_logic_vector(511 downto 0);
+signal decompressor_out_fifo_free_count : std_logic_vector(8 downto 0);
 
 constant INPUT_VECTOR_DELAY_CYCLES : integer := 4;
 type input_vector_type is array(INPUT_VECTOR_DELAY_CYCLES downto 0) of std_logic_vector(511 downto 0);
 signal input_vector : input_vector_type;
-
-signal reorder_start_address_adjust : std_logic;
-signal reorder_start_address : std_logic_vector(15 downto 0);
-signal reordered_response_data : std_logic_vector(511 downto 0);
-signal reordered_resonse : std_logic;
 
 signal residual_store_raddr : std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
 signal residual_store_waddr : std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
@@ -178,7 +174,6 @@ signal step_writeback_valid : std_logic;
 signal step_writeback : std_logic_vector(511 downto 0);
 signal step_writeback_index : integer range 0 to 15 := 0;
 
-
 component simple_dual_port_ram_single_clock
 generic(
 	DATA_WIDTH : natural := 8;
@@ -212,20 +207,56 @@ port(
 	almostfull: out std_logic);
 end component;
 
-component reorder
+component request_receive
+generic(ADDRESS_WIDTH : integer := 32;
+		LOG2_MAX_iBATCHSIZE : integer := 9;
+		LOG2_MAX_NUMFEATURES: integer := 15);
+port (
+	clk: in std_logic;
+	resetn : in std_logic;
+
+	start : in std_logic;
+	restart : in std_logic;
+
+	read_request : out std_logic;
+	read_request_address : out std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+	read_request_tid : out std_logic_vector(15 downto 0);
+	read_request_almostfull : in std_logic;
+
+	read_response : in std_logic;
+	read_response_data : in std_logic_vector(511 downto 0);
+	read_response_tid : in std_logic_vector(15 downto 0);
+
+	out_residual_valid : out std_logic;
+	out_b_valid : out std_logic;
+	out_a_valid : out std_logic;
+	out_index : out std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
+	out_data : out std_logic_vector(511 downto 0);
+
+	external_free_count : in std_logic_vector(8 downto 0);
+	enable_staleness : in std_logic;
+	read_size_from_memory : in std_logic;
+	a_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+	b_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+	step_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+	residual_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+	number_of_features : in std_logic_vector(LOG2_MAX_NUMFEATURES downto 0);
+	number_of_batches : in std_logic_vector(15 downto 0);
+	batch_size : in std_logic_vector(15 downto 0));
+end component;
+
+component decompressor
 generic(
-	LOG2_BUFFER_DEPTH : integer := 8;
-	ADDRESS_WIDTH : integer := 32);
+	LOG2_BUFFER_DEPTH : integer := 8);
 port (
 	clk : in std_logic;
 	resetn : in std_logic;
-	start_address_adjust : std_logic;
-	start_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-	in_trigger : in std_logic;
-	in_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+	to_integer_scaler : std_logic_vector(15 downto 0);
+	in_valid : in std_logic;
 	in_data : in std_logic_vector(511 downto 0);
+	out_valid : out std_logic;
 	out_data : out std_logic_vector(511 downto 0);
-	out_valid : out std_logic);
+	out_fifo_free_count : out std_logic_vector(LOG2_BUFFER_DEPTH downto 0));
 end component;
 
 component float_vector_subtract
@@ -266,15 +297,6 @@ component fp_mult_arria10
 	);
 end component;
 
-component fp_subtract_arria10
-	port (
-		a      : in  std_logic_vector(31 downto 0) := (others => '0'); --      a.a
-		areset : in  std_logic                     := '0';             -- areset.reset
-		b      : in  std_logic_vector(31 downto 0) := (others => '0'); --      b.b
-		clk    : in  std_logic                     := '0';             --    clk.clk
-		q      : out std_logic_vector(31 downto 0)                     --      q.q
-	);
-end component;
 
 component float_scalar_vector_mult
 generic (VALUES_PER_LINE : integer := 16);
@@ -296,21 +318,59 @@ new_residual0 <= new_residual(31 downto 0);
 
 reset <= not resetn;
 
-reordering: reorder
+allowed_batch_to_read <= std_logic_vector(write_batch_index);
+request_receive_lines: request_receive
 generic map (
-	LOG2_BUFFER_DEPTH => 8,
-	ADDRESS_WIDTH => 16)
+	ADDRESS_WIDTH => ADDRESS_WIDTH,
+	LOG2_MAX_iBATCHSIZE => LOG2_MAX_iBATCHSIZE,
+	LOG2_MAX_NUMFEATURES => 15)
 port map (
 	clk => clk,
 	resetn => resetn,
 
-	start_address_adjust => reorder_start_address_adjust,
-	start_address => reorder_start_address,
-	in_trigger => read_response,
-	in_address => read_response_tid,
-	in_data => read_response_data,
-	out_data => reordered_response_data,
-	out_valid => reordered_resonse);
+	start => start,
+	restart => epoch_start,
+
+	read_request => read_request,
+	read_request_address => read_request_address,
+	read_request_tid => read_request_tid,
+	read_request_almostfull => read_request_almostfull,
+
+	read_response => read_response,
+	read_response_data => read_response_data,
+	read_response_tid => read_response_tid,
+
+	out_residual_valid => response_residual_valid,
+	out_b_valid => response_b_valid,
+	out_a_valid => response_a_valid,
+	out_index => response_index,
+	out_data => response_data,
+
+	external_free_count => decompressor_out_fifo_free_count,
+	enable_staleness => enable_staleness,
+	read_size_from_memory => enable_decompression,
+	a_address => a_address,
+	b_address => b_address,
+	step_address => step_address,
+	residual_address => residual_address,
+	number_of_features => number_of_features(15 downto 0),
+	number_of_batches => allowed_batch_to_read,
+	batch_size => batch_size);
+
+decompressor_in_valid <= response_a_valid when enable_decompression = '1' else '0';
+decompression: decompressor
+generic map (
+	LOG2_BUFFER_DEPTH => 8)
+port map (
+	clk => clk,
+	resetn => resetn,
+	to_integer_scaler => to_integer_scaler,
+	in_valid => decompressor_in_valid,
+	in_data => response_data,
+	out_valid => decompressor_out_valid,
+	out_data => decompressor_out_data,
+	out_fifo_free_count => decompressor_out_fifo_free_count);
+a_data <= decompressor_out_data when enable_decompression = '1' else response_data;
 
 residual_store: simple_dual_port_ram_single_clock
 generic map (
@@ -375,7 +435,7 @@ port map (
 	clk => clk,
 	resetn => resetn,
 	trigger => residual_minus_b_trigger,
-	vector1 => residual_store_loading_dout,
+	vector1 => residual_store_dout,
 	vector2 => b_store_dout,
 	result_almost_valid => residual_minus_b_almost_valid,
 	result_valid => residual_minus_b_valid,
@@ -445,24 +505,18 @@ if clk'event and clk = '1' then
 	iNUMBER_OF_FEATURES <= unsigned(number_of_features);
 	iNUMBER_OF_BATCHES <= unsigned(number_of_batches);
 	iBATCH_SIZE <= unsigned(batch_size);
-	iBATCH_OFFSET <= batch_index*iBATCH_SIZE;
 	write_iBATCH_OFFSET <= write_batch_index*iBATCH_SIZE;
-	iCOLUMN_SIZE <= iNUMBER_OF_BATCHES*iBATCH_SIZE;
-	iCOLUMN_OFFSET <= feature_index*iCOLUMN_SIZE + iBATCH_OFFSET;
+
 
 	if resetn = '0' then
-		read_request <= '0';
 		write_request <= '0';
 		done <= '0';
 
-		read_state <= B"00";
-		receive_state <= B"00";
+		epoch_start <= '0';
+		finish_allowed <= '0';
 		completed_epochs <= (others => '0');
 
-		NumberOfRequestedReads <= (others => '0');
-		residual_NumberOfRequestedReads <= (others => '0');
-		b_NumberOfRequestedReads <= (others => '0');
-		a_NumberOfRequestedReads <= (others => '0');
+		NumberOfReceivedReads <= (others => '0');
 		residual_NumberOfReceivedReads <= (others => '0');
 		b_NumberOfReceivedReads <= (others => '0');
 		a_NumberOfReceivedReads <= (others => '0');
@@ -470,147 +524,65 @@ if clk'event and clk = '1' then
 		step_NumberOfWriteRequests <= (others => '0');
 		NumberOfWriteResponses <= (others => '0');
 
-		feature_index <= (others => '0');
-		feature_receive_index <= (others => '0');
-		feature_update_index <= (others => '0');
-		batch_index <= (others => '0');
-		write_batch_index <= (others => '0');
-		i_index <= (others => '0');
 		i_receive_index <= (others => '0');
+		feature_update_index <= (others => '0');
+		write_batch_index <= (others => '0');
 		i_write_index <= (others => '0');
 		i_update_index <= (others => '0');
 		i_writeback_index <= (others => '0');
 		i_writerequest_index <= (others => '0');
 
-		new_column_read_allowed <= '1';
 		write_residual_back <= '0';
-		finish_allowed <= '0';
-
-		reorder_start_address_adjust <= '0';
 
 		a_fifo_we <= '0';
 
 		step_writeback_valid <= '0';
+		step_writeback <= (others => '0');
 		step_writeback_index <= 0;
 	else
-		-- Request lines
-		read_request <= '0';
-		reorder_start_address_adjust <= '0';
-		if start = '1' and write_request_almostfull = '0' and read_request_almostfull = '0' and a_NumberOfRequestedReads < iCOLUMN_SIZE*iNUMBER_OF_FEATURES and new_column_read_allowed = '1' then
-			read_request <= '1';
-			read_request_tid <= std_logic_vector(NumberOfRequestedReads(15 downto 0));
-			NumberOfRequestedReads <= NumberOfRequestedReads + 1;
-			if NumberOfRequestedReads = 0 then
-				reorder_start_address_adjust <= '1';
-				reorder_start_address <= (others => '0');
-			end if;
-
-			if read_state = B"00" then --read residual
-				read_request_address <= std_logic_vector(unsigned(residual_address) + iBATCH_OFFSET + i_index);
-
-				if i_index = iBATCH_SIZE-1 then
-					i_index <= (others => '0');
-					read_state <= B"01";
-				else
-					i_index <= i_index + 1;
-				end if;
-
-				residual_NumberOfRequestedReads <= residual_NumberOfRequestedReads + 1;
-			elsif read_state = B"01" then --read b
-				read_request_address <= std_logic_vector(unsigned(b_address) + iBATCH_OFFSET + i_index);
-
-				if i_index = iBATCH_SIZE-1 then
-					i_index <= (others => '0');
-					read_state <= B"11";
-				else
-					i_index <= i_index + 1;
-				end if;
-
-				b_NumberOfRequestedReads <= b_NumberOfRequestedReads + 1;
-			else -- read a
-				read_request_address <= std_logic_vector(unsigned(a_address) + iCOLUMN_OFFSET(ADDRESS_WIDTH-1 downto 0) + i_index);
-
-				if i_index = iBATCH_SIZE-1 then
-					new_column_read_allowed <= enable_staleness;
-					i_index <= (others => '0');	
-					if feature_index = iNUMBER_OF_FEATURES-1 then
-						read_state <= B"00";
-						feature_index <= (others => '0');
-						if batch_index = iNUMBER_OF_BATCHES-1 then
-							batch_index <= (others => '0');
-						else
-							batch_index <= batch_index + 1;
-						end if;
-					else
-						feature_index <= feature_index + 1;
-					end if;
-				else
-					i_index <= i_index + 1;
-				end if;
-
-				a_NumberOfRequestedReads <= a_NumberOfRequestedReads + 1;
-			end if;
-		end if;
-
+		
 		-- Receive lines
 		residual_store_we <= '0';
 		residual_store_loading_we <= '0';
+		if response_residual_valid = '1' then
+			residual_store_we <= '1';
+			residual_store_loading_we <= '1';
+			residual_store_din <= response_data;
+			residual_store_loading_din <= response_data;
+			residual_store_waddr <= std_logic_vector(response_index);
+			residual_store_loading_waddr <= std_logic_vector(response_index);
+			residual_NumberOfReceivedReads <= residual_NumberOfReceivedReads + 1;
+		end if;
+
 		b_store_we <= '0';
-		a_fifo_we <= '0';
+		if response_b_valid = '1' then
+			b_store_we <= '1';
+			b_store_din <= response_data;
+			b_store_waddr <= std_logic_vector(response_index);
+			b_NumberOfReceivedReads <= b_NumberOfReceivedReads + 1;
+		end if;
+
 		residual_store_re <= '0';
 		b_store_re <= '0';
-		if reordered_resonse = '1' then
-			NumberOfReceivedReads <= NumberOfReceivedReads + 1;
-			if receive_state = B"00" then --receive residual
-				residual_store_we <= '1';
-				residual_store_loading_we <= '1';
-				residual_store_din <= reordered_response_data;
-				residual_store_loading_din <= reordered_response_data;
-				residual_store_waddr <= std_logic_vector(i_receive_index);
-				residual_store_loading_waddr <= std_logic_vector(i_receive_index);
-				if i_receive_index = iBATCH_SIZE-1 then
-					i_receive_index <= (others => '0');
-					receive_state <= B"01";
-				else
-					i_receive_index <= i_receive_index + 1;
-				end if;
-				residual_NumberOfReceivedReads <= residual_NumberOfReceivedReads + 1;
-			elsif receive_state = B"01" then --receive b
-				b_store_we <= '1';
-				b_store_din <= reordered_response_data;
-				b_store_waddr <= std_logic_vector(i_receive_index);
-				if i_receive_index = iBATCH_SIZE-1 then
-					i_receive_index <= (others => '0');
-					receive_state <= B"11";
-				else
-					i_receive_index <= i_receive_index + 1;
-				end if;
-				b_NumberOfReceivedReads <= b_NumberOfReceivedReads + 1;
-			else --receive a
-				a_fifo_we <= '1';
-				a_fifo_din <= reordered_response_data;
+		a_fifo_we <= '0';
+		if (response_a_valid = '1' and enable_decompression = '0') or decompressor_out_valid = '1' then
+			a_fifo_we <= '1';
+			a_fifo_din <= a_data;
+			input_vector(0) <= a_data;
 
-				input_vector(0) <= reordered_response_data;
+			residual_store_re <= '1';
+			b_store_re <= '1';
+			residual_store_raddr <= std_logic_vector(i_receive_index);
+			b_store_raddr <= std_logic_vector(i_receive_index);
 
-				residual_store_re <= '1';
-				b_store_re <= '1';
-				residual_store_raddr <= std_logic_vector(i_receive_index);
-				b_store_raddr <= std_logic_vector(i_receive_index);
-
-				if i_receive_index = iBATCH_SIZE-1 then
-					i_receive_index <= (others => '0');
-					if feature_receive_index = iNUMBER_OF_FEATURES-1 then
-						receive_state <= B"00";
-						feature_receive_index <= (others => '0');
-					else
-						feature_receive_index <= feature_receive_index + 1;
-					end if;
-				else
-					i_receive_index <= i_receive_index + 1;
-				end if;
-				a_NumberOfReceivedReads <= a_NumberOfReceivedReads + 1;
+			if i_receive_index = iBATCH_SIZE-1 then
+				i_receive_index <= (others => '0');
+			else
+				i_receive_index <= i_receive_index + 1;
 			end if;
+			a_NumberOfReceivedReads <= a_NumberOfReceivedReads + 1;
 		end if;
+
 
 
 		residual_store_loading_re <= '0';
@@ -627,16 +599,15 @@ if clk'event and clk = '1' then
 
 		step_writeback_valid <= '0';
 		if new_residual_valid = '1' then
-			residual_store_we <= '1';
-			residual_store_waddr <= std_logic_vector(i_update_index);
-			residual_store_din <= new_residual;
+			if feature_update_index < iNUMBER_OF_FEATURES-1 then
+				residual_store_we <= '1';
+				residual_store_waddr <= std_logic_vector(i_update_index);
+				residual_store_din <= new_residual;
+			end if;
 			residual_store_loading_we <= '1';
 			residual_store_loading_waddr <= std_logic_vector(i_update_index);
 			residual_store_loading_din <= new_residual;
 
-			if i_update_index = 0 then
-				new_column_read_allowed <= '1';
-			end if;
 			if i_update_index = iBATCH_SIZE-1 then
 				i_update_index <= (others => '0');
 				if feature_update_index = iNUMBER_OF_FEATURES-1 then
@@ -660,7 +631,6 @@ if clk'event and clk = '1' then
 			if i_writeback_index = iBATCH_SIZE-1 then
 				i_writeback_index <= (others => '0');
 				write_residual_back <= '0';
-				new_column_read_allowed <= '1';
 			else
 				i_writeback_index <= i_writeback_index + 1;
 			end if;
@@ -668,6 +638,7 @@ if clk'event and clk = '1' then
 		residual_writeback_re_1d <= residual_writeback_re;
 
 
+		epoch_start <= '0';
 		write_request <= '0';
 		if residual_writeback_re_1d = '1' then
 			write_request <= '1';
@@ -675,24 +646,7 @@ if clk'event and clk = '1' then
 			write_request_data <= residual_store_loading_dout;
 			if i_writerequest_index = iBATCH_SIZE-1 then
 				i_writerequest_index <= (others => '0');
-				if write_batch_index = iNUMBER_OF_BATCHES-1 then
-					write_batch_index <= (others => '0');
-
-					if completed_epochs = iNUMBER_OF_EPOCHS-1 then
-						finish_allowed <= '1';
-					else
-						residual_NumberOfRequestedReads <= (others => '0');
-						b_NumberOfRequestedReads <= (others => '0');
-						a_NumberOfRequestedReads <= (others => '0');
-						residual_NumberOfReceivedReads <= (others => '0');
-						b_NumberOfReceivedReads <= (others => '0');
-						a_NumberOfReceivedReads <= (others => '0');
-					end if;
-					completed_epochs <= completed_epochs + 1;
-
-				else
-					write_batch_index <= write_batch_index + 1;
-				end if;
+				finish_allowed <= '1';
 			else
 				i_writerequest_index <= i_writerequest_index + 1;
 			end if;
@@ -725,9 +679,20 @@ if clk'event and clk = '1' then
 
 		if finish_allowed = '1' and NumberOfWriteResponses = (residual_NumberOfWriteRequests+step_NumberOfWriteRequests) and NumberOfWriteResponses > 0 then
 			finish_allowed <= '0';
-			done <= '1';
-		end if;
 
+			if write_batch_index = iNUMBER_OF_BATCHES-1 then
+				write_batch_index <= (others => '0');
+				if completed_epochs = iNUMBER_OF_EPOCHS-1 then
+					done <= '1';
+				else
+					epoch_start <= '1';
+				end if;
+				completed_epochs <= completed_epochs + 1;
+			else
+				write_batch_index <= write_batch_index + 1;
+			end if;
+
+		end if;
 
 	end if;
 end if;

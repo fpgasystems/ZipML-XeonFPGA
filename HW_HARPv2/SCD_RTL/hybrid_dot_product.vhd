@@ -48,10 +48,10 @@ signal float_mult_result_valid : std_logic;
 signal float_mult_result : std_logic_vector(32*VALUES_PER_LINE-1 downto 0);
 
 signal fixed_mult_result_valid : std_logic;
-signal fixed_mult_result : std_logic_vector(32*VALUES_PER_LINE-1 downto 0);
+signal fixed_mult_result : std_logic_vector(48*VALUES_PER_LINE-1 downto 0);
 
 signal adder_tree_result_valid : std_logic;
-signal adder_tree_result : std_logic_vector(31 downto 0);
+signal adder_tree_result : std_logic_vector(47 downto 0);
 
 signal internal_accumulation_count : integer;
 signal accumulation : signed(47 downto 0);
@@ -60,6 +60,10 @@ signal valid_pulse_counter : integer;
 
 signal internal_result_valid : std_logic_vector(CONVERSION_LATENCY downto 0);
 signal internal_result : signed(47 downto 0);
+
+type float_vector_type is array(15 downto 0) of std_logic_vector(31 downto 0);
+signal vector1_monitor : float_vector_type;
+signal vector2_monitor : float_vector_type;
 
 component fp_converter48_arria10
     port (
@@ -84,24 +88,26 @@ port (
 end component;
 
 component fixed_adder_tree
-generic (LOG2_VALUES_PER_LINE : integer := 4);
+generic (
+	PRECISION : integer := 48;
+	LOG2_VALUES_PER_LINE : integer := 4);
 port (
 	clk : in std_logic;
 	trigger : in std_logic;
-	vector : in std_logic_vector(32*2**LOG2_VALUES_PER_LINE-1 downto 0);
+	vector : in std_logic_vector(PRECISION*2**LOG2_VALUES_PER_LINE-1 downto 0);
 	result_valid : out std_logic;
-	result : out std_logic_vector(31 downto 0));
+	result : out std_logic_vector(PRECISION-1 downto 0));
 end component;
 
 function convert_float_to_signed23(float : std_logic_vector(31 downto 0)) return std_logic_vector is
 variable exponent : unsigned(7 downto 0);
 variable mantissa : unsigned(22 downto 0);
-variable temp : unsigned(31 downto 0);
-variable result : signed(31 downto 0);
+variable temp : unsigned(47 downto 0);
+variable result : signed(47 downto 0);
 begin
 	exponent := unsigned(float(30 downto 23));
 	mantissa := unsigned(float(22 downto 0));
-	temp := X"00" & '1' & mantissa;
+	temp := X"000000" & '1' & mantissa;
 	if exponent >= 127 then
 		temp := shift_left(temp, to_integer(exponent-127));
 	else
@@ -133,6 +139,7 @@ port map (
 
 adder_tree: fixed_adder_tree
 generic map (
+	PRECISION => 48,
 	LOG2_VALUES_PER_LINE => LOG2_VALUES_PER_LINE)
 port map (
 	clk => clk,
@@ -157,7 +164,7 @@ if clk'event and clk = '1' then
 
 	fixed_mult_result_valid <= float_mult_result_valid;
 	for k in 0 to 15 loop
-		fixed_mult_result(32*k+31 downto 32*k) <= convert_float_to_signed23(float_mult_result(32*k+31 downto 32*k));
+		fixed_mult_result(48*(k+1)-1 downto 48*k) <= convert_float_to_signed23(float_mult_result(32*(k+1)-1 downto 32*k));
 	end loop;
 
 	if resetn = '0' then
@@ -196,6 +203,11 @@ if clk'event and clk = '1' then
 			internal_result_valid(i) <= internal_result_valid(i-1);
 		end loop;
 	end if;
+
+	for k in 0 to 15 loop
+		vector1_monitor(k) <= vector1(32*(k+1)-1 downto 32*k);
+		vector2_monitor(k) <= vector2(32*(k+1)-1 downto 32*k);
+	end loop;
 end if;
 end process;
 

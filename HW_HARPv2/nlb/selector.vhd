@@ -226,6 +226,8 @@ port(
 	start : in std_logic;
 	done : out std_logic;
 
+	enable_decompression : in std_logic;
+	to_integer_scaler : in std_logic_vector(15 downto 0);
 	enable_staleness : in std_logic;
 	a_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	b_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
@@ -290,7 +292,7 @@ parti_start <= start and (not src_bram_verified) and (not dst_bram_verified);
 FSCD: floatFSCD
 generic map (
 	ADDRESS_WIDTH => ADDRESS_WIDTH,
-	LOG2_MAX_iBATCHSIZE => 10)
+	LOG2_MAX_iBATCHSIZE => 11)
 port map (
 	clk => clk_200,
 	resetn => resetn,
@@ -314,6 +316,8 @@ port map (
 	start => parti_start,
 	done => done,
 
+	enable_decompression => config5(1),
+	to_integer_scaler => config5(17 downto 2),
 	enable_staleness => config5(0),
 	a_address => a_address,
 	b_address => b_address,

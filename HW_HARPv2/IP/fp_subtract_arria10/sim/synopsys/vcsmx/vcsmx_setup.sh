@@ -1,5 +1,5 @@
 
-# (C) 2001-2017 Altera Corporation. All rights reserved.
+# (C) 2001-2018 Altera Corporation. All rights reserved.
 # Your use of Altera Corporation's design tools, logic functions and 
 # other software and tools, and its AMPP partner logic functions, and 
 # any output files any of the foregoing (including device programming 
@@ -12,7 +12,7 @@
 # or its authorized distributors. Please refer to the applicable 
 # agreement for further details.
 
-# ACDS 16.0 211 linux 2017.10.15.17:48:42
+# ACDS 16.0 211 linux 2018.02.28.18:47:39
 
 # ----------------------------------------
 # vcsmx - auto-generated simulation script
@@ -59,7 +59,7 @@
 # within the Quartus project, and generate a unified
 # script which supports all the Altera IP within the design.
 # ----------------------------------------
-# ACDS 16.0 211 linux 2017.10.15.17:48:42
+# ACDS 16.0 211 linux 2018.02.28.18:47:39
 # ----------------------------------------
 # initialize variables
 TOP_LEVEL_NAME="fp_subtract_arria10"
