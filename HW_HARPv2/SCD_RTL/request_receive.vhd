@@ -39,6 +39,8 @@ port (
 	read_response_data : in std_logic_vector(511 downto 0);
 	read_response_tid : in std_logic_vector(15 downto 0);
 
+	requested_reads_count : out std_logic_vector(31 downto 0);
+	reorder_free_count : out std_logic_vector(31 downto 0);
 	out_residual_valid : out std_logic;
 	out_b_valid : out std_logic;
 	out_a_valid : out std_logic;
@@ -141,6 +143,9 @@ port(
 end component;
 
 begin
+
+requested_reads_count <= std_logic_vector(NumberOfRequestedReads);
+reorder_free_count <= std_logic_vector(reordered_buffer_free_count);
 
 reordering: reorder
 generic map (
@@ -290,7 +295,7 @@ if clk'event and clk = '1' then
 			else -- read a
 				read_request_address <= std_logic_vector(	unsigned(a_address) 
 															+ unsigned( column_offset_dout( (feature_index_in_line+1)*32-1 downto feature_index_in_line*32 ) )
-															+ unsigned( column_previous_readsize_dout( (feature_index_in_line+1)*16-1 downto feature_index_in_line*16 ) )
+															+ unsigned( column_previous_readsize_dout( (feature_index_in_line+1)*32-1 downto feature_index_in_line*32 ) )
 															+ i_index);
 				if read_size_from_memory = '1' then
 					if i_index = 0 then
@@ -312,7 +317,8 @@ if clk'event and clk = '1' then
 						feature_index <= feature_index + 1;
 					end if;
 					column_previous_readsize_we <= '1';
-					column_previous_readsize_din((feature_index_in_line+1)*16-1 downto feature_index_in_line*16) <= std_logic_vector( unsigned( column_previous_readsize_dout((feature_index_in_line+1)*16-1 downto feature_index_in_line*16) ) + iREAD_SIZE );
+					column_previous_readsize_din <= column_previous_readsize_dout;
+					column_previous_readsize_din((feature_index_in_line+1)*32-1 downto feature_index_in_line*32) <= std_logic_vector( unsigned( column_previous_readsize_dout((feature_index_in_line+1)*32-1 downto feature_index_in_line*32) ) + iREAD_SIZE );
 					column_previous_readsize_waddr <= std_logic_vector( feature_index(LOG2_MAX_NUMFEATURES-1 downto 4) );
 				else
 					i_index <= i_index + 1;

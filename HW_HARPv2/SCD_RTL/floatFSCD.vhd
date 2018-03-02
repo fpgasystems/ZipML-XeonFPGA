@@ -61,6 +61,8 @@ end floatFSCD;
 
 architecture behavioral of floatFSCD is
 
+signal timeout_occured : std_logic;
+signal timeout : unsigned(31 downto 0);
 signal reset : std_logic;
 constant LOG2_VALUE_WIDTH : integer := 5;
 constant LOG2_LINE_WIDTH : integer := 9;
@@ -76,6 +78,7 @@ signal write_iBATCH_OFFSET : unsigned(31 downto 0) := (others => '0');
 signal finish_allowed : std_logic;
 signal completed_epochs : unsigned(15 downto 0);
 
+signal NumberOfRequestedReads : std_logic_vector(31 downto 0);
 signal NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
 signal residual_NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
 signal b_NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
@@ -96,6 +99,7 @@ signal allowed_batch_to_read : std_logic_vector(15 downto 0);
 signal write_residual_back : std_logic;
 
 signal epoch_start : std_logic;
+signal reorder_free_count : std_logic_vector(31 downto 0);
 signal response_residual_valid : std_logic;
 signal response_b_valid : std_logic;
 signal response_a_valid : std_logic;
@@ -227,6 +231,8 @@ port (
 	read_response_data : in std_logic_vector(511 downto 0);
 	read_response_tid : in std_logic_vector(15 downto 0);
 
+	requested_reads_count : out std_logic_vector(31 downto 0);
+	reorder_free_count : out std_logic_vector(31 downto 0);
 	out_residual_valid : out std_logic;
 	out_b_valid : out std_logic;
 	out_a_valid : out std_logic;
@@ -340,6 +346,8 @@ port map (
 	read_response_data => read_response_data,
 	read_response_tid => read_response_tid,
 
+	requested_reads_count => NumberOfRequestedReads,
+	reorder_free_count => reorder_free_count,
 	out_residual_valid => response_residual_valid,
 	out_b_valid => response_b_valid,
 	out_a_valid => response_a_valid,
@@ -507,8 +515,10 @@ if clk'event and clk = '1' then
 	iBATCH_SIZE <= unsigned(batch_size);
 	write_iBATCH_OFFSET <= write_batch_index*iBATCH_SIZE;
 
-
 	if resetn = '0' then
+		timeout_occured <= '0';
+		timeout <= (others => '0');
+
 		write_request <= '0';
 		done <= '0';
 
@@ -540,11 +550,13 @@ if clk'event and clk = '1' then
 		step_writeback <= (others => '0');
 		step_writeback_index <= 0;
 	else
-		
+		 timeout <= timeout + 1;
+
 		-- Receive lines
 		residual_store_we <= '0';
 		residual_store_loading_we <= '0';
 		if response_residual_valid = '1' then
+			timeout <= (others => '0');
 			residual_store_we <= '1';
 			residual_store_loading_we <= '1';
 			residual_store_din <= response_data;
@@ -554,6 +566,7 @@ if clk'event and clk = '1' then
 			residual_NumberOfReceivedReads <= residual_NumberOfReceivedReads + 1;
 		end if;
 
+
 		b_store_we <= '0';
 		if response_b_valid = '1' then
 			b_store_we <= '1';
@@ -561,6 +574,7 @@ if clk'event and clk = '1' then
 			b_store_waddr <= std_logic_vector(response_index);
 			b_NumberOfReceivedReads <= b_NumberOfReceivedReads + 1;
 		end if;
+
 
 		residual_store_re <= '0';
 		b_store_re <= '0';
@@ -582,7 +596,6 @@ if clk'event and clk = '1' then
 			end if;
 			a_NumberOfReceivedReads <= a_NumberOfReceivedReads + 1;
 		end if;
-
 
 
 		residual_store_loading_re <= '0';
@@ -692,6 +705,29 @@ if clk'event and clk = '1' then
 				write_batch_index <= write_batch_index + 1;
 			end if;
 
+		end if;
+
+		if timeout > X"BEBC200" and timeout_occured = '0' then
+		--if timeout > X"4000" and timeout_occured = '0' then -- Use during simulation
+			timeout_occured <= '1';
+			write_request <= '1';
+			write_request_address <= (others => '0');
+			write_request_data(392 downto 0) <= 	std_logic_vector(decompressor_out_fifo_free_count) &
+													X"0000" & std_logic_vector(write_batch_index) &
+													std_logic_vector(feature_update_index) &
+													std_logic_vector(reorder_free_count) &
+													X"0000" & std_logic_vector(completed_epochs) &
+													std_logic_vector(NumberOfWriteResponses) &
+													std_logic_vector(step_NumberOfWriteRequests) &
+													std_logic_vector(residual_NumberOfWriteRequests) &
+													std_logic_vector(a_NumberOfReceivedReads) &
+													std_logic_vector(b_NumberOfReceivedReads) &
+													std_logic_vector(residual_NumberOfReceivedReads) &
+													std_logic_vector(NumberOfReceivedReads) &
+													NumberOfRequestedReads;
+		end if;
+		if timeout_occured = '1' and NumberOfWriteResponses = 1 then
+			done <= '1';
 		end if;
 
 	end if;

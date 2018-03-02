@@ -556,6 +556,7 @@ if clk_200'event and clk_200 = '1' then
 		wrapper_read_response <= '0';
 		if read_response = '1' then -- Receive lines and forward them to the wrapper
 			wrapper_read_response <= '1';
+			--wrapper_read_response <= read_response_data(0); -- For testing the timeout
 			wrapper_read_response_data <= read_response_data;
 		end if;
 
