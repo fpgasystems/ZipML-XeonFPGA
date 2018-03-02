@@ -687,7 +687,7 @@ char iFPGA::allocateWorkspace(char IOmem_separate) {
 					SleepNano(100);
 				}
 				uint64_t address = readFromMemory64('o', i*8) & 0x3FFFFFFFFFF;
-				printf("src_addr %d: %zx \n", i, address);
+				// printf("src_addr %d: %zx \n", i, address);
 				if (address != (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i])) {
 					printf("Page table verification failed for src_addr: %zx, supposed to be: %zx \n", address, (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i]) );
 					return -1;
@@ -698,7 +698,7 @@ char iFPGA::allocateWorkspace(char IOmem_separate) {
 					SleepNano(100);
 				}
 				uint64_t address = readFromMemory64('o', (i+page_count)*8) & 0x3FFFFFFFFFF;
-				printf("dst_addr %d: %zx \n", i, address);
+				// printf("dst_addr %d: %zx \n", i, address);
 				if (address != (uint64_t)CACHELINE_ALIGNED_ADDR(m_OutputPhys[i])) {
 					printf("Page table verification failed for dst_addr: %zx, supposed to be: %zx \n", address, (uint64_t)CACHELINE_ALIGNED_ADDR(m_OutputPhys[i]) );
 					return -1;
@@ -711,7 +711,7 @@ char iFPGA::allocateWorkspace(char IOmem_separate) {
 					SleepNano(100);
 				}
 				uint64_t address = readFromMemory64('i', i*8) & 0x3FFFFFFFFFF;
-				printf("src_addr %d: %zx \n", i, address);
+				// printf("src_addr %d: %zx \n", i, address);
 				if (address != (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i])) {
 					printf("Page table verification failed for src_addr: %zx, supposed to be: %zx \n", address, (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i]) );
 					return -1;
@@ -722,7 +722,7 @@ char iFPGA::allocateWorkspace(char IOmem_separate) {
 					SleepNano(100);
 				}
 				uint64_t address = readFromMemory64('i', (i+page_count)*8) & 0x3FFFFFFFFFF;
-				printf("dst_addr %d: %zx \n", i, address);
+				// printf("dst_addr %d: %zx \n", i, address);
 				if (address != (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i])) {
 					printf("Page table verification failed for dst_addr: %zx, supposed to be: %zx \n", address, (uint64_t)CACHELINE_ALIGNED_ADDR(m_InputPhys[i]) );
 					return -1;
