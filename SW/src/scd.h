@@ -19,6 +19,7 @@
 using namespace std;
 
 #define NUM_THREADS 14
+#define NUM_FINSTANCES 2
 
 class scd {
 
@@ -40,10 +41,10 @@ public:
 	char gotFPGA;
 	RuntimeClient runtimeClient;
 	iFPGA* interfaceFPGA;
-	uint32_t a_address;
-	uint32_t b_address;
-	uint32_t residual_address;
-	uint32_t step_address;
+	uint32_t a_address[NUM_FINSTANCES];
+	uint32_t b_address[NUM_FINSTANCES];
+	uint32_t residual_address[NUM_FINSTANCES];
+	uint32_t step_address[NUM_FINSTANCES];
 
 	uint32_t page_size_in_cache_lines;
 	uint32_t pages_to_allocate;
@@ -51,7 +52,7 @@ public:
 
 	scd(char getFPGA){
 		page_size_in_cache_lines = 65536; // 65536 x 64B = 4 MB
-		pages_to_allocate = 64;
+		pages_to_allocate = 8;
 		numValuesPerLine = 16;
 
 		if (getFPGA == 1) {
@@ -61,9 +62,16 @@ public:
 				exit(1);
 			}
 			gotFPGA = 1;
+
+			cout << "Zeroing allocated space.." << endl;
+			for (uint32_t i = 0; i < numValuesPerLine*page_size_in_cache_lines*pages_to_allocate; i++) {
+				interfaceFPGA->writeToMemory32('i', 0, i);
+			}
 		}
 		else
 			gotFPGA = 0;
+
+
 
 
 		a = NULL;
@@ -123,8 +131,8 @@ public:
 	void AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useCompressed, uint32_t toIntegerScaler);
 #endif
 
-	uint32_t copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize);
-	uint32_t copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize);
+	uint32_t copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs);
+	uint32_t copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs);
 	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useCompressed, uint32_t toIntegerScaler);
 	
 
@@ -489,8 +497,9 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 						gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
 					}
 				}
-
+				cout << "gradient: " << gradient << endl;
 				float step = stepSize*(gradient/minibatchSize);
+				cout << "step: " << step << endl;
 				x[m*numFeatures + j] -= step;
 
 				if (useCompressed == 1) {
@@ -922,98 +931,161 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32
 }
 #endif
 
-uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize) {
+uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs) {
 	uint32_t address32 = 0;
-
+	uint32_t numMinibatchesAssigned = 0;
+	
 	// Space for offsets
-	address32 += numFeatures;
-	if (address32%numValuesPerLine > 0)
-		address32 += (numValuesPerLine - address32%numValuesPerLine);
-
-	// Write b
-	b_address = address32/numValuesPerLine;
-	for (uint32_t i = 0; i < numMinibatches*minibatchSize; i++) {
-		interfaceFPGA->writeToMemoryFloat('i', b[i], address32++);
-	}
-	if (address32%numValuesPerLine > 0)
-		address32 += (numValuesPerLine - address32%numValuesPerLine);
-
-	// Write a
-	a_address = 0;
-	for (uint32_t j = 0; j < numFeatures; j++) {
-
-		interfaceFPGA->writeToMemory32('i', address32/numValuesPerLine, j);
-
-		for (uint32_t i = 0; i < numMinibatches*minibatchSize; i++) {
-			interfaceFPGA->writeToMemoryFloat('i', a[j][i], address32++);
+	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+		a_address[n] = address32/numValuesPerLine;
+		for (uint32_t i = 0; i < (numFeatures/numValuesPerLine + (numFeatures%numValuesPerLine > 0))*numValuesPerLine; i++) {
+			interfaceFPGA->writeToMemoryFloat('i', 0, address32++);
 		}
-		if (address32%numValuesPerLine > 0)
-			address32 += (numValuesPerLine - address32%numValuesPerLine);
 	}
-
-	residual_address = address32/numValuesPerLine;
-
-	uint32_t column_size = numMinibatches*minibatchSize + (numValuesPerLine - (numMinibatches*minibatchSize)%numValuesPerLine);
-	address32 += column_size;
-	step_address = address32/numValuesPerLine;
-
-	return address32;
-}
-
-uint32_t scd::copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize) {
-	uint32_t address32 = 0;
-
-	// Space for offsets
-	address32 += numFeatures;
-	if (address32%numValuesPerLine > 0)
-		address32 += (numValuesPerLine - address32%numValuesPerLine);
 
 	// Write b
-	b_address = address32/numValuesPerLine;
-	for (uint32_t i = 0; i < numMinibatches*minibatchSize; i++) {
-		interfaceFPGA->writeToMemoryFloat('i', b[i], address32++);
+	numMinibatchesAssigned = 0;
+	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+		b_address[n] = address32/numValuesPerLine;
+
+		for (uint32_t i = 0; i < numMinibatchesToAssign[n]*minibatchSize; i++) {
+			interfaceFPGA->writeToMemoryFloat('i', b[numMinibatchesAssigned*minibatchSize + i], address32++);
+		}
+		if (address32%numValuesPerLine > 0) {
+			uint32_t padding = (numValuesPerLine - address32%numValuesPerLine);
+			for (uint32_t i = 0; i < padding; i++) {
+				interfaceFPGA->writeToMemory32('i', 0, address32++);
+			}
+		}
+
+		numMinibatchesAssigned += numMinibatchesToAssign[n];
 	}
-	if (address32%numValuesPerLine > 0)
-		address32 += (numValuesPerLine - address32%numValuesPerLine);
-
+	
 	// Write a
-	a_address = 0;
 	for (uint32_t j = 0; j < numFeatures; j++) {
+		
+		numMinibatchesAssigned = 0;
+		for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+			interfaceFPGA->writeToMemory32('i', address32/numValuesPerLine, a_address[n]*numValuesPerLine + j);
 
-		interfaceFPGA->writeToMemory32('i', address32/numValuesPerLine, j);
-
-		for (uint32_t m = 0; m < numMinibatches; m++) {
-
-			uint32_t compressed_a_offset = 0;
-			if (m > 0)
-				compressed_a_offset = compressed_a_sizes[j][m-1];
-
-			uint32_t numWordsInBatch = compressed_a_sizes[j][m] - compressed_a_offset;
-
-			// Size for the current compressed mini batch, +1 for the first line which contains how many further lines to read
-			interfaceFPGA->writeToMemory32('i', numWordsInBatch/numValuesPerLine + (numWordsInBatch%numValuesPerLine > 0) + 1, address32++);
-			if (address32%numValuesPerLine > 0)
-				address32 += (numValuesPerLine - address32%numValuesPerLine);
-
-			for (uint32_t i = 0; i < numWordsInBatch; i++) {
-				interfaceFPGA->writeToMemory32('i', compressed_a[j][compressed_a_offset + i], address32++);
+			for (uint32_t i = 0; i < numMinibatchesToAssign[n]*minibatchSize; i++) {
+				interfaceFPGA->writeToMemoryFloat('i', a[j][numMinibatchesAssigned*minibatchSize + i], address32++);
 			}
 			if (address32%numValuesPerLine > 0) {
 				uint32_t padding = (numValuesPerLine - address32%numValuesPerLine);
 				for (uint32_t i = 0; i < padding; i++) {
-					interfaceFPGA->writeToMemory32('i', 0, address32++);
+					interfaceFPGA->writeToMemoryFloat('i', 0, address32++);
 				}
 			}
+
+			numMinibatchesAssigned += numMinibatchesToAssign[n];
+		}		
+	}
+
+	// Residual addresses
+	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+		residual_address[n] = address32/numValuesPerLine;
+		for (uint32_t i = 0; i < numMinibatchesToAssign[n]*minibatchSize; i++) {
+			interfaceFPGA->writeToMemoryFloat('i', 0, address32++);
 		}
 	}
 
-	residual_address = address32/numValuesPerLine;
+	// Step addresses
+	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+		step_address[n] = address32/numValuesPerLine;
+		address32 += numEpochs*numMinibatchesToAssign[n]*(numFeatures/numValuesPerLine + (numFeatures%numValuesPerLine > 0))*numValuesPerLine;
+	}
 
-	uint32_t column_size = numMinibatches*minibatchSize + (numValuesPerLine - (numMinibatches*minibatchSize)%numValuesPerLine);
-	address32 += column_size;
-	step_address = address32/numValuesPerLine;
+	return step_address[0]*numValuesPerLine;
+}
 
-	return address32;
+uint32_t scd::copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs) {
+	uint32_t address32 = 0;
+	uint32_t numMinibatchesAssigned = 0;
+
+	// Space for offsets
+	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+		a_address[n] = address32/numValuesPerLine;
+		for (uint32_t i = 0; i < (numFeatures/numValuesPerLine + (numFeatures%numValuesPerLine > 0))*numValuesPerLine; i++) {
+			interfaceFPGA->writeToMemoryFloat('i', 0, address32++);
+		}
+	}
+	// cout << address32 << endl;
+
+	// Write b
+	numMinibatchesAssigned = 0;
+	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+		b_address[n] = address32/numValuesPerLine;
+
+		for (uint32_t i = 0; i < numMinibatchesToAssign[n]*minibatchSize; i++) {
+			interfaceFPGA->writeToMemoryFloat('i', b[numMinibatchesAssigned*minibatchSize + i], address32++);
+		}
+		if (address32%numValuesPerLine > 0) {
+			uint32_t padding = (numValuesPerLine - address32%numValuesPerLine);
+			for (uint32_t i = 0; i < padding; i++) {
+				interfaceFPGA->writeToMemory32('i', 0, address32++);
+			}
+		}
+
+		numMinibatchesAssigned += numMinibatchesToAssign[n];
+	}
+	// cout << address32 << endl;
+
+	// Write a
+	for (uint32_t j = 0; j < numFeatures; j++) {
+		
+		numMinibatchesAssigned = 0;
+		for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+			interfaceFPGA->writeToMemory32('i', address32/numValuesPerLine, a_address[n]*numValuesPerLine + j);
+
+			for (uint32_t m = numMinibatchesAssigned; m < numMinibatchesAssigned+numMinibatchesToAssign[n]; m++) {
+				uint32_t compressed_a_offset = 0;
+				if (m > 0)
+					compressed_a_offset = compressed_a_sizes[j][m-1];
+
+				uint32_t numWordsInBatch = compressed_a_sizes[j][m] - compressed_a_offset;
+
+				// Size for the current compressed mini batch, +1 for the first line which contains how many further lines to read
+				// cout << address32 << endl;
+				interfaceFPGA->writeToMemory32('i', numWordsInBatch/numValuesPerLine + (numWordsInBatch%numValuesPerLine > 0) + 1, address32++);
+				if (address32%numValuesPerLine > 0) {
+					uint32_t padding = (numValuesPerLine - address32%numValuesPerLine);
+					for (uint32_t i = 0; i < padding; i++) {
+						interfaceFPGA->writeToMemory32('i', 0, address32++);
+					}
+				}
+				// cout << address32 << endl;
+
+				for (uint32_t i = 0; i < numWordsInBatch; i++) {
+					interfaceFPGA->writeToMemory32('i', compressed_a[j][compressed_a_offset + i], address32++);
+				}
+				if (address32%numValuesPerLine > 0) {
+					uint32_t padding = (numValuesPerLine - address32%numValuesPerLine);
+					for (uint32_t i = 0; i < padding; i++) {
+						interfaceFPGA->writeToMemory32('i', 0, address32++);
+					}
+				}
+				// cout << address32 << endl;
+			}
+			numMinibatchesAssigned += numMinibatchesToAssign[n];
+		}		
+	}
+
+	// Residual addresses
+	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+		residual_address[n] = address32/numValuesPerLine;
+		for (uint32_t i = 0; i < numMinibatchesToAssign[n]*minibatchSize; i++) {
+			interfaceFPGA->writeToMemoryFloat('i', 0, address32++);
+		}
+	}
+
+	// Step addresses
+	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+		step_address[n] = address32/numValuesPerLine;
+		address32 += numEpochs*numMinibatchesToAssign[n]*(numFeatures/numValuesPerLine + (numFeatures%numValuesPerLine > 0))*numValuesPerLine;
+	}
+
+	return step_address[0]*numValuesPerLine;
 }
 
 void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useCompressed, uint32_t toIntegerScaler) {
@@ -1022,11 +1094,23 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
 	cout << "rest: " << rest << endl;
 
+	uint32_t numMinibatchesAssigned = 0;
+	uint32_t numMinibatchesToAssign[NUM_FINSTANCES];
+	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+		if (n == NUM_FINSTANCES-1)
+			numMinibatchesToAssign[n] = numMinibatches - numMinibatchesAssigned;
+		else
+			numMinibatchesToAssign[n] = numMinibatches/NUM_FINSTANCES + (numMinibatches%NUM_FINSTANCES > 0);
+		cout << "numMinibatchesToAssign[" << n << "]: " << numMinibatchesToAssign[n] << endl; 
+		numMinibatchesAssigned += numMinibatchesToAssign[n];
+	}
+
 	uint32_t address32 = 0;
 	if (useCompressed == 0)
-		address32 = copy_data_into_FPGA_memory(numMinibatches, minibatchSize);
+		address32 = copy_data_into_FPGA_memory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs);
 	else
-		address32 = copy_compressed_data_into_FPGA_memory(numMinibatches, minibatchSize);
+		address32 = copy_compressed_data_into_FPGA_memory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs);
+
 
 	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
 	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
@@ -1035,26 +1119,31 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 
 	cout << "Initial loss: " << calculate_loss(x_end) << endl;
 
-	uint64_t temp_reg = 0;
-	interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_READ_OFFSET, 0);
-	interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_WRITE_OFFSET, 0);
-	temp_reg = 0;
-	temp_reg = ((uint64_t)b_address << 32) | ((uint64_t)a_address);
-	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, temp_reg);
-	temp_reg = 0;
-	temp_reg = ((uint64_t)residual_address << 32) | ((uint64_t)step_address);
-	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, temp_reg);
-	temp_reg = 0;
-	uint32_t minibatchSize_inCL = minibatchSize/numValuesPerLine;
-	temp_reg = ((uint64_t)minibatchSize_inCL << 48) | ((uint64_t)numMinibatches << 32) | ((uint64_t)numFeatures);
-	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, temp_reg);
-	float tempStepSize = stepSize/(float)minibatchSize;
-	uint32_t* tempStepSizeAddr = (uint32_t*) &tempStepSize;
-	temp_reg = 0;
-	temp_reg = ((uint64_t)numEpochs << 32) | ((uint64_t)*tempStepSizeAddr);
-	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp_reg);
-	temp_reg = ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;
-	interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp_reg);
+	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+		interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
+
+		uint64_t temp_reg = 0;
+		interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_READ_OFFSET, 0);
+		interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_WRITE_OFFSET, 0);
+
+		temp_reg = 0;
+		temp_reg = ((uint64_t)b_address[n] << 32) | ((uint64_t)a_address[n]);
+		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, temp_reg);
+		temp_reg = 0;
+		temp_reg = ((uint64_t)residual_address[n] << 32) | ((uint64_t)step_address[n]);
+		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, temp_reg);
+		temp_reg = 0;
+		uint32_t minibatchSize_inCL = minibatchSize/numValuesPerLine;
+		temp_reg = ((uint64_t)minibatchSize_inCL << 48) | ((uint64_t)numMinibatchesToAssign[n] << 32) | ((uint64_t)numFeatures);
+		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, temp_reg);
+		float tempStepSize = stepSize/(float)minibatchSize;
+		uint32_t* tempStepSizeAddr = (uint32_t*) &tempStepSize;
+		temp_reg = 0;
+		temp_reg = ((uint64_t)numEpochs << 32) | ((uint64_t)*tempStepSizeAddr);
+		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp_reg);
+		temp_reg = ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;
+		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp_reg);
+	}
 
 	double start = get_time();
 
@@ -1064,14 +1153,23 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 	cout << "Time for all epochs on the FPGA: " << end-start << endl;
 	cout << "Time for one epoch on the FPGA: " << (end-start)/numEpochs << endl;
 
+	uint32_t index[NUM_FINSTANCES];
+	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+		index[n] = 0;
+	}
 	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
-		for (uint32_t m = 0; m < numMinibatches; m++) {
-			for (uint32_t j = 0; j < numFeatures; j++) {
-				x[m*numFeatures + j] -= interfaceFPGA->readFromMemoryFloat('i', address32++);
+
+		for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+			for (uint32_t m = 0; m < numMinibatchesToAssign[n]; m++) {
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					x[m*numFeatures + j] -= interfaceFPGA->readFromMemoryFloat('i', step_address[n]*numValuesPerLine+index[n]);
+					index[n]++;
+				}
+				if (index[n]%numValuesPerLine > 0)
+					index[n] += (numValuesPerLine - index[n]%numValuesPerLine);
 			}
-			if (address32%numValuesPerLine > 0)
-				address32 += (numValuesPerLine - address32%numValuesPerLine);
 		}
+	
 		
 		for (uint32_t j = 0; j < numFeatures; j++) {
 			x_end[j] = 0;

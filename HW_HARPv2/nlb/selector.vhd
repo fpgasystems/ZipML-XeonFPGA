@@ -4,6 +4,7 @@ use ieee.numeric_std.all;
 
 entity selector is
 generic(
+	ID : integer := 0;
 	ADDRESS_WIDTH : integer := 32);
 port(
 	clk_200 : in std_logic;
@@ -48,7 +49,7 @@ port(
 
 	src_addr : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	dst_addr : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-	number_of_CL_to_process : in std_logic_vector(31 downto 0);
+	instance_id : in std_logic_vector(31 downto 0);
 	addr_reset : in std_logic_vector(31 downto 0);
 	read_offset : in std_logic_vector(31 downto 0);
 	write_offset : in std_logic_vector(31 downto 0);
@@ -62,6 +63,7 @@ end selector;
 architecture behavioral of selector is
 
 signal parti_start : std_logic;
+signal parti_done : std_logic;
 
 constant PAGE_SIZE_IN_BITS : integer := 16;
 --constant PAGE_SIZE_IN_BITS : integer := 7;
@@ -70,6 +72,8 @@ constant FIFO_DEPTH_BITS : integer := 8;
 
 signal src_addr_internal : std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 signal dst_addr_internal : std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+signal read_offset_internal : std_logic_vector(31 downto 0);
+signal write_offset_internal : std_logic_vector(31 downto 0);
 
 signal src_bram_we : std_logic;
 signal src_bram_re : std_logic;
@@ -191,15 +195,18 @@ port(
 	q : 	out std_logic_vector(DATA_WIDTH-1 downto 0));
 end component;
 
-signal a_address : std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-signal b_address : std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-signal step_address : std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-signal residual_address : std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-signal number_of_features : std_logic_vector(31 downto 0);
-signal number_of_batches : std_logic_vector(15 downto 0);
-signal batch_size : std_logic_vector(15 downto 0);
-signal step_size : std_logic_vector(31 downto 0);
-signal number_of_epochs : std_logic_vector(15 downto 0);
+signal enable_decompression : std_logic := '0';
+signal to_integer_scaler : std_logic_vector(15 downto 0) := (others => '0');
+signal enable_staleness : std_logic := '0';
+signal a_address : std_logic_vector(ADDRESS_WIDTH-1 downto 0) := (others => '0');
+signal b_address : std_logic_vector(ADDRESS_WIDTH-1 downto 0) := (others => '0');
+signal step_address : std_logic_vector(ADDRESS_WIDTH-1 downto 0) := (others => '0');
+signal residual_address : std_logic_vector(ADDRESS_WIDTH-1 downto 0) := (others => '0');
+signal number_of_features : std_logic_vector(31 downto 0) := (others => '0');
+signal number_of_batches : std_logic_vector(15 downto 0) := (others => '0');
+signal batch_size : std_logic_vector(15 downto 0) := (others => '0');
+signal step_size : std_logic_vector(31 downto 0) := (others => '0');
+signal number_of_epochs : std_logic_vector(15 downto 0) := (others => '0');
 component floatFSCD
 generic(ADDRESS_WIDTH : integer := 32;
 		LOG2_MAX_iBATCHSIZE : integer := 9);
@@ -288,7 +295,8 @@ port map (
 	q => wrapper_read_response_tid);
 
 
-parti_start <= start and (not src_bram_verified) and (not dst_bram_verified);
+parti_start <= start and (not src_bram_verified) and (not dst_bram_verified) when unsigned(number_of_batches) > 0 else '0';
+done <= parti_done when unsigned(number_of_batches) > 0 else (start and (not src_bram_verified) and (not dst_bram_verified));
 FSCD: floatFSCD
 generic map (
 	ADDRESS_WIDTH => ADDRESS_WIDTH,
@@ -314,11 +322,11 @@ port map (
 	write_response => write_response,
 
 	start => parti_start,
-	done => done,
+	done => parti_done,
 
-	enable_decompression => config5(1),
-	to_integer_scaler => config5(17 downto 2),
-	enable_staleness => config5(0),
+	enable_decompression => enable_decompression,
+	to_integer_scaler => to_integer_scaler,
+	enable_staleness => enable_staleness,
 	a_address => a_address,
 	b_address => b_address,
 	step_address => step_address,
@@ -328,20 +336,32 @@ port map (
 	batch_size => batch_size,
 	step_size => step_size,
 	number_of_epochs => number_of_epochs);
-a_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');
-a_address(31 downto 0) <= config1(31 downto 0);
-b_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');
-b_address(31 downto 0) <= config1(63 downto 32);
-step_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');
-step_address(31 downto 0) <= config2(31 downto 0);
-residual_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');
-residual_address(31 downto 0) <= config2(63 downto 32);
-number_of_features <= config3(31 downto 0);
-number_of_batches <= config3(47 downto 32);
-batch_size <= config3(63 downto 48);
-step_size <= config4(31 downto 0);
-number_of_epochs <= config4(47 downto 32);
+process(clk_200)
+begin
+if clk_200'event and clk_200 = '1' then
+	if to_integer(unsigned(instance_id)) = ID then
+		read_offset_internal <= read_offset;
+		write_offset_internal <= write_offset;
 
+		enable_decompression <= config5(1);
+		to_integer_scaler <= config5(17 downto 2);
+		enable_staleness <= config5(0);
+		a_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');
+		a_address(31 downto 0) <= config1(31 downto 0);
+		b_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');
+		b_address(31 downto 0) <= config1(63 downto 32);
+		step_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');
+		step_address(31 downto 0) <= config2(31 downto 0);
+		residual_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');
+		residual_address(31 downto 0) <= config2(63 downto 32);
+		number_of_features <= config3(31 downto 0);
+		number_of_batches <= config3(47 downto 32);
+		batch_size <= config3(63 downto 48);
+		step_size <= config4(31 downto 0);
+		number_of_epochs <= config4(47 downto 32);
+	end if;
+end if;
+end process;
 
 ififo: fifo
 generic map(
@@ -484,7 +504,7 @@ if clk_200'event and clk_200 = '1' then
 		src_bram_re <= '0';
 		if wrapper_read_request = '1' then
 			src_bram_re <= '1';
-			offsetted_read_request_address := unsigned(wrapper_read_request_address) + unsigned(read_offset);
+			offsetted_read_request_address := unsigned(wrapper_read_request_address) + unsigned(read_offset_internal);
 			src_bram_raddr <= std_logic_vector(offsetted_read_request_address(10 + PAGE_SIZE_IN_BITS downto PAGE_SIZE_IN_BITS));
 			current_read_request_address <= wrapper_read_request_tid & std_logic_vector(offsetted_read_request_address);
 		end if;
@@ -574,7 +594,7 @@ if clk_200'event and clk_200 = '1' then
 		dst_bram_re <= '0';
 		if ofifo_valid = '1' then
 			dst_bram_re <= '1';
-			offsetted_write_request_address := unsigned(ofifo_dout(511+ADDRESS_WIDTH downto 512)) + unsigned(write_offset);
+			offsetted_write_request_address := unsigned(ofifo_dout(511+ADDRESS_WIDTH downto 512)) + unsigned(write_offset_internal);
 			dst_bram_raddr <= std_logic_vector(offsetted_write_request_address(10+PAGE_SIZE_IN_BITS downto PAGE_SIZE_IN_BITS));
 			current_write_request_address <= std_logic_vector(offsetted_write_request_address);
             current_write_request_data <= ofifo_dout(511 downto 0);

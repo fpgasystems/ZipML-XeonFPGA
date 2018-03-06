@@ -252,7 +252,7 @@ if clk'event and clk = '1' then
 			and NumberOfPendingReads < unsigned(external_free_count)
 		then
 			read_request <= '1';
-			read_request_tid <= std_logic_vector(NumberOfRequestedReads(15 downto 0));
+			read_request_tid <= B"00" & std_logic_vector(NumberOfRequestedReads(13 downto 0));
 			NumberOfRequestedReads <= NumberOfRequestedReads + 1;
 			if NumberOfRequestedReads = 0 then
 				reorder_start_address_adjust <= '1';
@@ -260,8 +260,7 @@ if clk'event and clk = '1' then
 			end if;
 
 			if read_state = B"00" then
-				read_request_address(ADDRESS_WIDTH-1 downto LOG2_MAX_NUMFEATURES-4) <= (others => '0');
-				read_request_address(LOG2_MAX_NUMFEATURES-4-1 downto 0) <= std_logic_vector(offset_read_index);
+				read_request_address <= std_logic_vector(unsigned(a_address) + offset_read_index);
 
 				column_previous_readsize_we <= '1';
 				column_previous_readsize_din <= (others => '0');
@@ -293,10 +292,11 @@ if clk'event and clk = '1' then
 				end if;
 				b_NumberOfRequestedReads <= b_NumberOfRequestedReads + 1;
 			else -- read a
-				read_request_address <= std_logic_vector(	unsigned(a_address) 
-															+ unsigned( column_offset_dout( (feature_index_in_line+1)*32-1 downto feature_index_in_line*32 ) )
-															+ unsigned( column_previous_readsize_dout( (feature_index_in_line+1)*32-1 downto feature_index_in_line*32 ) )
-															+ i_index);
+				read_request_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');
+				read_request_address(31 downto 0) <= std_logic_vector(	
+															unsigned( column_offset_dout( (feature_index_in_line+1)*32-1 downto feature_index_in_line*32 ) ) +
+															unsigned( column_previous_readsize_dout( (feature_index_in_line+1)*32-1 downto feature_index_in_line*32 ) ) +
+															i_index);
 				if read_size_from_memory = '1' then
 					if i_index = 0 then
 						new_column_read_allowed <= '0';
