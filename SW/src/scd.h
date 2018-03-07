@@ -19,7 +19,7 @@
 using namespace std;
 
 #define NUM_THREADS 14
-#define NUM_FINSTANCES 2
+#define NUM_FINSTANCES 4
 
 class scd {
 
@@ -70,9 +70,6 @@ public:
 		}
 		else
 			gotFPGA = 0;
-
-
-
 
 		a = NULL;
 		b = NULL;
@@ -131,9 +128,10 @@ public:
 	void AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useCompressed, uint32_t toIntegerScaler);
 #endif
 
+	uint32_t print_FPGA_memory();
 	uint32_t copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs);
 	uint32_t copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs);
-	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useCompressed, uint32_t toIntegerScaler);
+	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse);
 	
 
 	uint32_t decompress_column(uint32_t* compressedColumn, uint32_t inNumWords, float* decompressedColumn, uint32_t toIntegerScaler);
@@ -931,8 +929,19 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32
 }
 #endif
 
-uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs) {
+uint32_t scd::print_FPGA_memory() {
+
 	uint32_t address32 = 0;
+	
+	for (uint32_t i = 0; i < residual_address[0]*numValuesPerLine; i++) {
+		cout << i << ": " << interfaceFPGA->readFromMemoryFloat('i', address32++) << endl;
+	}
+
+	exit(0);
+}
+
+uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs) {
+	uint32_t address32 = NUM_FINSTANCES*pages_to_allocate*numValuesPerLine;
 	uint32_t numMinibatchesAssigned = 0;
 	
 	// Space for offsets
@@ -1000,7 +1009,7 @@ uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minib
 }
 
 uint32_t scd::copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs) {
-	uint32_t address32 = 0;
+	uint32_t address32 = NUM_FINSTANCES*pages_to_allocate*numValuesPerLine;
 	uint32_t numMinibatchesAssigned = 0;
 
 	// Space for offsets
@@ -1088,7 +1097,7 @@ uint32_t scd::copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uin
 	return step_address[0]*numValuesPerLine;
 }
 
-void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useCompressed, uint32_t toIntegerScaler) {
+void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse) {
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
@@ -1097,10 +1106,14 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 	uint32_t numMinibatchesAssigned = 0;
 	uint32_t numMinibatchesToAssign[NUM_FINSTANCES];
 	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
-		if (n == NUM_FINSTANCES-1)
-			numMinibatchesToAssign[n] = numMinibatches - numMinibatchesAssigned;
+		if (numMinibatchesAssigned < numMinibatches) {
+			if (n == NUM_FINSTANCES-1)
+				numMinibatchesToAssign[n] = numMinibatches - numMinibatchesAssigned;
+			else
+				numMinibatchesToAssign[n] = numMinibatches/numInstancesToUse + (numMinibatches%NUM_FINSTANCES > 0);
+		}
 		else
-			numMinibatchesToAssign[n] = numMinibatches/NUM_FINSTANCES + (numMinibatches%NUM_FINSTANCES > 0);
+			numMinibatchesToAssign[n] = 0;
 		cout << "numMinibatchesToAssign[" << n << "]: " << numMinibatchesToAssign[n] << endl; 
 		numMinibatchesAssigned += numMinibatchesToAssign[n];
 	}
@@ -1110,6 +1123,7 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 		address32 = copy_data_into_FPGA_memory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs);
 	else
 		address32 = copy_compressed_data_into_FPGA_memory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs);
+
 
 
 	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
