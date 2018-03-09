@@ -143,7 +143,7 @@ public:
 	void a_normalize(char toMinus1_1, char rowOrColumnWise);
 	void b_normalize(char toMinus1_1, char binarize_b, float b_toBinarizeTo);
 	float compress_a(uint32_t minibatchSize, uint32_t toIntegerScaler);
-	void encrypt_a(uint32_t minibatchSize);
+	void encrypt_a(uint32_t minibatchSize, char useCompressed);
 
 	float calculate_loss(float* x);
 
@@ -386,8 +386,9 @@ float scd::compress_a(uint32_t minibatchSize, uint32_t toIntegerScaler) {
 			if (m > 0)
 				compressed_a_offset = compressed_a_sizes[j][m-1];
 			uint32_t numWordsInBatch = compress_column(a[j] + m*minibatchSize, minibatchSize, compressed_a[j] + compressed_a_offset, toIntegerScaler);
+			if (numWordsInBatch%4 > 0)
+				numWordsInBatch += (4 - numWordsInBatch%4);
 			compressed_a_sizes[j][m] = compressed_a_offset + numWordsInBatch;
-
 			// cout << "compressed_a_sizes[" << j << "][" << m << "]: " << numWordsInBatch << endl;
 		}
 	}
@@ -403,7 +404,7 @@ float scd::compress_a(uint32_t minibatchSize, uint32_t toIntegerScaler) {
 	return compressionRate;
 }
 
-void scd::encrypt_a(uint32_t minibatchSize) {
+void scd::encrypt_a(uint32_t minibatchSize, char useCompressed) {
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
@@ -412,8 +413,23 @@ void scd::encrypt_a(uint32_t minibatchSize) {
 	encrypted_a = (uint32_t**)malloc(numFeatures*sizeof(uint32_t*));
 	for (uint32_t j = 0; j < numFeatures; j++) {
 		encrypted_a[j] = (uint32_t*)aligned_alloc(64, numSamples*sizeof(uint32_t));
-		for (uint32_t m = 0; m < numMinibatches; m++) {
-			encrypt_column(a[j] + m*minibatchSize, minibatchSize, encrypted_a[j] + m*minibatchSize);
+	}
+
+	if (useCompressed == 1) {
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			for (uint32_t m = 0; m < numMinibatches; m++) {
+				int32_t compressed_a_offset = 0;
+				if (m > 0)
+					compressed_a_offset = compressed_a_sizes[j][m-1];
+				encrypt_column((float*)(compressed_a[j] + compressed_a_offset), compressed_a_sizes[j][m] - compressed_a_offset, encrypted_a[j] + compressed_a_offset);
+			}
+		}
+	}
+	else {
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			for (uint32_t m = 0; m < numMinibatches; m++) {
+				encrypt_column(a[j] + m*minibatchSize, minibatchSize, encrypted_a[j] + m*minibatchSize);
+			}
 		}
 	}
 }
@@ -512,53 +528,56 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 	cout << "Initial loss: " << calculate_loss(x_end) << endl;
 
-	float* transformedColumn = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	float* transformedColumn1 = NULL;
+	float* transformedColumn2 = NULL;
+	if (useEncrypted == 1 && useCompressed == 1) {
+		transformedColumn1 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	}
+	else if (useEncrypted == 1 || useCompressed == 1) {
+		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	}
 
 	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
 
 		double start = get_time();
 
 		for (uint32_t m = 0; m < numMinibatches; m++) {
-			
 			for (uint32_t j = 0; j < numFeatures; j++) {
 
-				float gradient = 0;
-				if (useCompressed == 1) {
+				if (useEncrypted == 1 && useCompressed == 1) {
 					int32_t compressed_a_offset = 0;
 					if (m > 0)
 						compressed_a_offset = compressed_a_sizes[j][m-1];
-					uint32_t decompressedMiniBatchSize = decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn, toIntegerScaler);
 
-					for (uint32_t i = 0; i < minibatchSize; i++) {
-						gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*transformedColumn[i];
-					}
+					decrypt_column(encrypted_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn1);
+					decompress_column((uint32_t*)transformedColumn1, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
 				}
 				else if (useEncrypted == 1) {
-					decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn);
-
-					for (uint32_t i = 0; i < minibatchSize; i++) {
-						gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*transformedColumn[i];
-					}
+					decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn2);
+				}
+				else if (useCompressed == 1) {
+					int32_t compressed_a_offset = 0;
+					if (m > 0)
+						compressed_a_offset = compressed_a_sizes[j][m-1];
+					decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
 				}
 				else {
-					for (uint32_t i = 0; i < minibatchSize; i++) {
-						gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
-					}
+					transformedColumn2 = a[j] + m*minibatchSize;
 				}
-				// cout << "gradient: " << gradient << endl;
+
+				float gradient = 0;
+				for (uint32_t i = 0; i < minibatchSize; i++) {
+					gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*transformedColumn2[i];
+				}
+
+				cout << "gradient: " << gradient << endl;
 				float step = stepSize*(gradient/minibatchSize);
-				// cout << "step: " << step << endl;
+				cout << "step: " << step << endl;
 				x[m*numFeatures + j] -= step;
 
-				if (useCompressed == 1 || useEncrypted == 1) {
-					for (uint32_t i = 0; i < minibatchSize; i++) {
-						residual[m*minibatchSize + i] -= step*transformedColumn[i];
-					}
-				}
-				else {
-					for (uint32_t i = 0; i < minibatchSize; i++) {
-						residual[m*minibatchSize + i] -= step*a[j][m*minibatchSize + i];
-					}
+				for (uint32_t i = 0; i < minibatchSize; i++) {
+					residual[m*minibatchSize + i] -= step*transformedColumn2[i];
 				}
 			}
 		}
@@ -589,7 +608,13 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 		cout << epoch << endl;
 	}
 
-	free(transformedColumn);
+	if (useEncrypted == 1 && useCompressed == 1) {
+		free(transformedColumn1);
+		free(transformedColumn2);
+	}
+	else if (useEncrypted == 1 || useCompressed == 1) {
+		free(transformedColumn2);
+	}
 	free(x);
 	free(x_end);
 	free(residual);
@@ -620,7 +645,15 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 
 	cout << "Initial loss: " << calculate_loss(x_end) << endl;
 
-	float* transformedColumn = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	float* transformedColumn1 = NULL;
+	float* transformedColumn2 = NULL;
+	if (useEncrypted == 1 && useCompressed == 1) {
+		transformedColumn1 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	}
+	else if (useEncrypted == 1 || useCompressed == 1) {
+		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	}
 
 	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
 
@@ -630,94 +663,63 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 		__m256 a_temp;
 		__m256 b_temp;
 
-		if (useCompressed == 1 || useEncrypted == 1) {
-			for (uint32_t m = 0; m < numMinibatches; m++) {
-				for (uint32_t j = 0; j < numFeatures; j++) {
-					__m256 gradient = _mm256_setzero_ps();
+		for (uint32_t m = 0; m < numMinibatches; m++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
 
-					if (useCompressed == 1)
-						int32_t compressed_a_offset = 0;
-						if (m > 0)
-							compressed_a_offset = compressed_a_sizes[j][m-1];
-						uint32_t decompressedMiniBatchSize = decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn, toIntegerScaler);
-					else if (useEncrypted == 1) {
-						decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn);
-					}
+				if (useEncrypted == 1 && useCompressed == 1) {
+					int32_t compressed_a_offset = 0;
+					if (m > 0)
+						compressed_a_offset = compressed_a_sizes[j][m-1];
 
-					for (uint32_t i = 0; i < minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(transformedColumn + i);
-						b_temp = _mm256_load_ps(b + m*minibatchSize + i);
-						residual_temp = _mm256_load_ps(residual + m*minibatchSize + i);
-
-						__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
-						gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
-					}
-					__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
-
-					float stepReduce[8];
-					_mm256_store_ps(stepReduce, step);
-					stepReduce[0] = (stepReduce[0] + 
-									stepReduce[1] + 
-									stepReduce[2] + 
-									stepReduce[3] + 
-									stepReduce[4] + 
-									stepReduce[5] + 
-									stepReduce[6] + 
-									stepReduce[7]);
-
-
-					__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
-
-					x[m*numFeatures + j] += stepReduce[0];
-
-					for (uint32_t i = 0; i < minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(transformedColumn + i);
-						residual_temp = _mm256_load_ps(residual + m*minibatchSize + i);
-						residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
-
-						_mm256_store_ps(residual + m*minibatchSize + i, residual_temp);
-					}
+					decrypt_column(encrypted_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn1);
+					decompress_column((uint32_t*)transformedColumn1, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
 				}
-			}
-		}
-		else {
-			for (uint32_t m = 0; m < numMinibatches; m++) {
-				for (uint32_t j = 0; j < numFeatures; j++) {
-					__m256 gradient = _mm256_setzero_ps();
+				else if (useEncrypted == 1) {
+					decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn2);
+				}
+				else if (useCompressed == 1) {
+					int32_t compressed_a_offset = 0;
+					if (m > 0)
+						compressed_a_offset = compressed_a_sizes[j][m-1];
+					decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
+				}
+				else {
+					transformedColumn2 = a[j] + m*minibatchSize;
+				}
 
-					for (uint32_t i = 0; i < minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(a[j] + m*minibatchSize + i);
-						b_temp = _mm256_load_ps(b + m*minibatchSize + i);
-						residual_temp = _mm256_load_ps(residual + m*minibatchSize + i);
+				__m256 gradient = _mm256_setzero_ps();
+				for (uint32_t i = 0; i < minibatchSize; i+=8) {
+					a_temp = _mm256_load_ps(transformedColumn2 + i);
+					b_temp = _mm256_load_ps(b + m*minibatchSize + i);
+					residual_temp = _mm256_load_ps(residual + m*minibatchSize + i);
 
-						__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
-						gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
-					}
-					__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
+					__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
+					gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
+				}
+				__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
 
-					float stepReduce[8];
-					_mm256_store_ps(stepReduce, step);
-					stepReduce[0] = (stepReduce[0] + 
-									stepReduce[1] + 
-									stepReduce[2] + 
-									stepReduce[3] + 
-									stepReduce[4] + 
-									stepReduce[5] + 
-									stepReduce[6] + 
-									stepReduce[7]);
+				float stepReduce[8];
+				_mm256_store_ps(stepReduce, step);
+				stepReduce[0] = (stepReduce[0] + 
+								stepReduce[1] + 
+								stepReduce[2] + 
+								stepReduce[3] + 
+								stepReduce[4] + 
+								stepReduce[5] + 
+								stepReduce[6] + 
+								stepReduce[7]);
 
 
-					__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
+				__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
 
-					x[m*numFeatures + j] += stepReduce[0];
+				x[m*numFeatures + j] += stepReduce[0];
 
-					for (uint32_t i = 0; i < minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(a[j] + m*minibatchSize + i);
-						residual_temp = _mm256_load_ps(residual + m*minibatchSize + i);
-						residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
+				for (uint32_t i = 0; i < minibatchSize; i+=8) {
+					a_temp = _mm256_load_ps(transformedColumn2 + i);
+					residual_temp = _mm256_load_ps(residual + m*minibatchSize + i);
+					residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
 
-						_mm256_store_ps(residual + m*minibatchSize + i, residual_temp);
-					}
+					_mm256_store_ps(residual + m*minibatchSize + i, residual_temp);
 				}
 			}
 		}
@@ -748,7 +750,13 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 		cout << epoch << endl;
 	}
 
-	free(transformedColumn);
+	if (useEncrypted == 1 && useCompressed == 1) {
+		free(transformedColumn1);
+		free(transformedColumn2);
+	}
+	else if (useEncrypted == 1 || useCompressed == 1) {
+		free(transformedColumn2);
+	}
 	free(x);
 	free(x_end);
 	free(residual);
@@ -782,7 +790,15 @@ void* batch_thread(void* args) {
 	float scaledStepSize = -r->stepSize/(float)r->minibatchSize;
 	__m256 scaledStepSize_temp = _mm256_set1_ps(scaledStepSize);
 
-	float* transformedColumn = (float*)aligned_alloc(64, r->minibatchSize*sizeof(float));
+	float* transformedColumn1 = NULL;
+	float* transformedColumn2 = NULL;
+	if (r->useEncrypted == 1 && r->useCompressed == 1) {
+		transformedColumn1 = (float*)aligned_alloc(64, r->minibatchSize*sizeof(float));
+		transformedColumn2 = (float*)aligned_alloc(64, r->minibatchSize*sizeof(float));
+	}
+	else if (useEncrypted == 1 || useCompressed == 1) {
+		transformedColumn2 = (float*)aligned_alloc(64, r->minibatchSize*sizeof(float));
+	}
 
 	double start, end;
 
@@ -795,100 +811,66 @@ void* batch_thread(void* args) {
 		__m256 a_temp;
 		__m256 b_temp;
 
-		if (r->useCompressed == 1 || r->useEncrypted == 1) {
+		for (uint32_t m = r->startingBatch; m < r->startingBatch + r->numBatchesToProcess; m++) {
+			for (uint32_t j = 0; j < r->numFeatures; j++) {
 
-			for (uint32_t m = r->startingBatch; m < r->startingBatch + r->numBatchesToProcess; m++) {
-				for (uint32_t j = 0; j < r->numFeatures; j++) {
-					__m256 gradient = _mm256_setzero_ps();
+				if (r->useEncrypted == 1 && r->useCompressed == 1) {
+					int32_t compressed_a_offset = 0;
+					if (m > 0)
+						compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
 
-					if (r->useCompressed == 1) {
-						int32_t compressed_a_offset = 0;
-						if (m > 0)
-							compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
-						uint32_t decompressedMiniBatchSize = r->app->decompress_column(r->app->compressed_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn, r->toIntegerScaler);
-					}
-					else if (r->useEncrypted == 1) {
-						decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn);
-					}
+					r->app->decrypt_column(r->app->encrypted_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn1);
+					r->app->decompress_column((uint32_t*)transformedColumn1, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, r->toIntegerScaler);
+				}
+				else if (r->useEncrypted == 1) {
+					decrypt_column(r->app->encrypted_a[j] + m*r->minibatchSize, r->minibatchSize, transformedColumn2);
+				}
+				else if (r->useCompressed == 1) {
+					int32_t compressed_a_offset = 0;
+					if (m > 0)
+						compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
+					r->app->decompress_column(r->app->compressed_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, r->toIntegerScaler);
+				}
+				else {
+					transformedColumn2 = r->a[j] + m*r->minibatchSize;
+				}
 
-					for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(transformedColumn + i);
-						b_temp = _mm256_load_ps(r->b + m*r->minibatchSize + i);
-						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
+				__m256 gradient = _mm256_setzero_ps();
+				for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
+					a_temp = _mm256_load_ps(transformedColumn2 + i);
+					b_temp = _mm256_load_ps(r->b + m*r->minibatchSize + i);
+					residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
 
-						__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
-						gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
-					}
-					__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
+					__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
+					gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
+				}
+				__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
 
-					float stepReduce[8];
-					_mm256_store_ps(stepReduce, step);
-					stepReduce[0] = (stepReduce[0] + 
-									stepReduce[1] + 
-									stepReduce[2] + 
-									stepReduce[3] + 
-									stepReduce[4] + 
-									stepReduce[5] + 
-									stepReduce[6] + 
-									stepReduce[7]);
+				float stepReduce[8];
+				_mm256_store_ps(stepReduce, step);
+				stepReduce[0] = (stepReduce[0] + 
+								stepReduce[1] + 
+								stepReduce[2] + 
+								stepReduce[3] + 
+								stepReduce[4] + 
+								stepReduce[5] + 
+								stepReduce[6] + 
+								stepReduce[7]);
 
 
-					__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
+				__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
 
-					r->x[m*r->numFeatures + j] += stepReduce[0];
+				r->x[m*r->numFeatures + j] += stepReduce[0];
 
-					for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(transformedColumn + i);
-						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
-						residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
+				for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
+					a_temp = _mm256_load_ps(transformedColumn2 + i);
+					residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
+					residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
 
-						_mm256_store_ps(r->residual + m*r->minibatchSize + i, residual_temp);
-					}
+					_mm256_store_ps(r->residual + m*r->minibatchSize + i, residual_temp);
 				}
 			}
 		}
-		else {
-			for (uint32_t m = r->startingBatch; m < r->startingBatch + r->numBatchesToProcess; m++) {
-				for (uint32_t j = 0; j < r->numFeatures; j++) {
-					__m256 gradient = _mm256_setzero_ps();
-
-					for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(r->a[j] + m*r->minibatchSize + i);
-						b_temp = _mm256_load_ps(r->b + m*r->minibatchSize + i);
-						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
-
-						__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
-						gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
-					}
-					__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
-
-					float stepReduce[8];
-					_mm256_store_ps(stepReduce, step);
-					stepReduce[0] = (stepReduce[0] + 
-									stepReduce[1] + 
-									stepReduce[2] + 
-									stepReduce[3] + 
-									stepReduce[4] + 
-									stepReduce[5] + 
-									stepReduce[6] + 
-									stepReduce[7]);
-
-
-					__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
-
-					r->x[m*r->numFeatures + j] += stepReduce[0];
-
-					for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(r->a[j] + m*r->minibatchSize + i);
-						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
-						residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
-
-						_mm256_store_ps(r->residual + m*r->minibatchSize + i, residual_temp);
-					}
-				}
-			}
-		}
-		
 
 		pthread_barrier_wait(r->barrier);
 
