@@ -110,11 +110,11 @@ signal dst_bram_verified : std_logic;
 signal read_request_accept_was_down : std_logic;
 signal read_request_accept_was_down_1d : std_logic;
 signal read_request_accept_was_down_2d : std_logic;
-signal current_read_request_address : std_logic_vector(16+ADDRESS_WIDTH-1 downto 0);
-signal current_read_request_address_1d : std_logic_vector(16+ADDRESS_WIDTH-1 downto 0);
-signal read_request_address_internal : std_logic_vector(16+ADDRESS_WIDTH-1 downto 0);
+signal current_read_request_address : std_logic_vector(18+ADDRESS_WIDTH-1 downto 0);
+signal current_read_request_address_1d : std_logic_vector(18+ADDRESS_WIDTH-1 downto 0);
+signal read_request_address_internal : std_logic_vector(18+ADDRESS_WIDTH-1 downto 0);
 
-type circular_address_buffer_type is array (23 downto 0) of std_logic_vector(16+ADDRESS_WIDTH-1 downto 0);
+type circular_address_buffer_type is array (23 downto 0) of std_logic_vector(18+ADDRESS_WIDTH-1 downto 0);
 signal circular_address_buffer : circular_address_buffer_type;
 signal cab_write_pointer : integer range 0 to 23 := 0;
 signal cab_read_pointer : integer range 0 to 23 := 0;
@@ -131,9 +131,12 @@ signal send_pending : std_logic := '0';
 signal wrapper_read_request : std_logic;
 signal wrapper_read_request_address : std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 signal wrapper_read_request_tid : std_logic_vector(15 downto 0);
+signal wrapper_read_request_length : std_logic_vector(1 downto 0);
 
+signal read_response_cacheline_number_1d : std_logic_vector(1 downto 0);
 signal wrapper_read_response : std_logic;
 signal wrapper_read_response_data : std_logic_vector(511 downto 0);
+signal wrapper_read_response_tid_with_CL_number : std_logic_vector(15 downto 0);
 signal wrapper_read_response_tid : std_logic_vector(15 downto 0);
 
 signal wrapper_write_request : std_logic;
@@ -143,10 +146,10 @@ signal wrapper_write_request_data : std_logic_vector(511 downto 0);
 signal wrapper_write_response : std_logic;
 
 signal ififo_we :			std_logic;
-signal ififo_din :			std_logic_vector(16+ADDRESS_WIDTH-1 downto 0);	
+signal ififo_din :			std_logic_vector(18+ADDRESS_WIDTH-1 downto 0);	
 signal ififo_re :			std_logic;
 signal ififo_valid :		std_logic;
-signal ififo_dout :			std_logic_vector(16+ADDRESS_WIDTH-1 downto 0);
+signal ififo_dout :			std_logic_vector(18+ADDRESS_WIDTH-1 downto 0);
 signal ififo_count :		std_logic_vector(FIFO_DEPTH_BITS-1 downto 0);
 signal ififo_empty :		std_logic;
 signal ififo_full :			std_logic;
@@ -217,6 +220,7 @@ port(
 	read_request : out std_logic;
 	read_request_address : out std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	read_request_tid : out std_logic_vector(15 downto 0);
+	read_request_length : out std_logic_vector(1 downto 0);
 	read_request_almostfull : in std_logic;
 
 	read_response : in std_logic;
@@ -251,9 +255,9 @@ begin
 
 read_request_address <= read_request_address_internal(ADDRESS_WIDTH-1 downto 0);
 read_request_transactionID <= read_request_address_internal(16+ADDRESS_WIDTH-1 downto ADDRESS_WIDTH);
+read_length <= read_request_address_internal(18+ADDRESS_WIDTH-1 downto 18+ADDRESS_WIDTH-2);
 write_request_transactionID <= (others => '0');
 
-read_length <= B"00";
 read_sop <= '1';
 write_length <= B"00";
 write_sop <= '1';
@@ -282,6 +286,7 @@ port map (
 	we => dst_bram_we,
 	q => dst_bram_dout);
 
+wrapper_read_response_tid_with_CL_number <= std_logic_vector(unsigned(wrapper_read_response_tid) + unsigned(read_response_cacheline_number_1d));
 read_tid_bram: simple_dual_port_ram_single_clock
 generic map (
 	DATA_WIDTH => 16,
@@ -308,11 +313,12 @@ port map (
 	read_request => wrapper_read_request,
 	read_request_address => wrapper_read_request_address,
 	read_request_tid => wrapper_read_request_tid,
+	read_request_length => wrapper_read_request_length,
 	read_request_almostfull => ififo_almostfull,
 
 	read_response => wrapper_read_response,
 	read_response_data => wrapper_read_response_data,
-	read_response_tid => wrapper_read_response_tid,
+	read_response_tid => wrapper_read_response_tid_with_CL_number,
 
 	write_request => wrapper_write_request,
 	write_request_address => wrapper_write_request_address,
@@ -365,9 +371,9 @@ end process;
 
 ififo: fifo
 generic map(
-	FIFO_WIDTH => 16+ADDRESS_WIDTH,
+	FIFO_WIDTH => 18+ADDRESS_WIDTH,
 	FIFO_DEPTH_BITS => FIFO_DEPTH_BITS,
-	FIFO_ALMOSTFULL_THRESHOLD => 240)
+	FIFO_ALMOSTFULL_THRESHOLD => 2**FIFO_DEPTH_BITS-20)
 port map(
 	clk => clk_200,
 	resetn => resetn,
@@ -386,7 +392,7 @@ ofifo: fifo
 generic map(
 	FIFO_WIDTH => ADDRESS_WIDTH + 512,
 	FIFO_DEPTH_BITS => FIFO_DEPTH_BITS,
-	FIFO_ALMOSTFULL_THRESHOLD => 240)
+	FIFO_ALMOSTFULL_THRESHOLD => 2**FIFO_DEPTH_BITS-20)
 port map(
 	clk => clk_200,
 	resetn => resetn,
@@ -413,6 +419,8 @@ if clk_200'event and clk_200 = '1' then
 	dst_bram_verify_1d <= dst_bram_verify;
 	src_bram_verify_2d <= src_bram_verify_1d;
 	dst_bram_verify_2d <= dst_bram_verify_1d;
+
+	read_response_cacheline_number_1d <= read_response_cacheline_number;
 
 	if resetn = '0' then
 		--clock_200 <= '0';
@@ -506,7 +514,7 @@ if clk_200'event and clk_200 = '1' then
 			src_bram_re <= '1';
 			offsetted_read_request_address := unsigned(wrapper_read_request_address) + unsigned(read_offset_internal);
 			src_bram_raddr <= std_logic_vector(offsetted_read_request_address(10 + PAGE_SIZE_IN_BITS downto PAGE_SIZE_IN_BITS));
-			current_read_request_address <= wrapper_read_request_tid & std_logic_vector(offsetted_read_request_address);
+			current_read_request_address <= wrapper_read_request_length & wrapper_read_request_tid & std_logic_vector(offsetted_read_request_address);
 		end if;
 		if src_bram_verify = '1' and start = '1' then
 			src_bram_re <= '1';
@@ -527,7 +535,7 @@ if clk_200'event and clk_200 = '1' then
 				write_request_data(ADDRESS_WIDTH-1 downto 0) <= src_bram_dout;
 			else
 				ififo_we <= '1';
-				ififo_din <= current_read_request_address_1d(16+ADDRESS_WIDTH-1 downto ADDRESS_WIDTH) & std_logic_vector(unsigned(src_bram_dout) + unsigned(current_read_request_address_1d(PAGE_SIZE_IN_BITS-1 downto 0)));
+				ififo_din <= current_read_request_address_1d(18+ADDRESS_WIDTH-1 downto ADDRESS_WIDTH) & std_logic_vector(unsigned(src_bram_dout) + unsigned(current_read_request_address_1d(PAGE_SIZE_IN_BITS-1 downto 0)));
 			end if;
 		end if;
 

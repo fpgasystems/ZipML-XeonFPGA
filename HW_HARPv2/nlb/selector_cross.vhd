@@ -71,6 +71,7 @@ signal done_200 : std_logic_vector(NUM_SELECTORS-1 downto 0);
 
 type address_200_type is array (NUM_SELECTORS-1 downto 0) of std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 type transactionID_200_type is array (NUM_SELECTORS-1 downto 0) of std_logic_vector(15 downto 0);
+type read_length_200_type is array (NUM_SELECTORS-1 downto 0) of std_logic_vector(1 downto 0);
 type CL_type is array(NUM_SELECTORS-1 downto 0) of std_logic_vector(511 downto 0);
 
 ----------------------------------------------------------- read_request Signals START
@@ -78,10 +79,11 @@ signal read_request_200 : std_logic_vector(NUM_SELECTORS-1 downto 0);
 signal read_request_accept_200 : std_logic_vector(NUM_SELECTORS-1 downto 0);
 signal read_request_address_200 : address_200_type;
 signal read_request_transactionID_200 : transactionID_200_type;
+signal read_length_200 : read_length_200_type;
 
 signal current_read_request_fifo : integer range 0 to NUM_SELECTORS-1;
 
-type read_request_fifo_data_type is array (NUM_SELECTORS-1 downto 0) of std_logic_vector(57 downto 0);
+type read_request_fifo_data_type is array (NUM_SELECTORS-1 downto 0) of std_logic_vector(59 downto 0);
 signal read_request_fifo_data : read_request_fifo_data_type;
 signal read_request_fifo_wrreq : std_logic_vector(NUM_SELECTORS-1 downto 0);
 signal read_request_fifo_rdreq : std_logic_vector(NUM_SELECTORS-1 downto 0);
@@ -95,14 +97,15 @@ signal read_response_200 : std_logic_vector(NUM_SELECTORS-1 downto 0);
 signal read_response_data_200 : CL_type;
 signal read_response_config_200 : std_logic_vector(NUM_SELECTORS-1 downto 0);
 signal read_response_transactionID_200 : transactionID_200_type;
+signal read_response_cacheline_number_200 : read_length_200_type;
 
 signal current_read_response_fifo : integer range 0 to NUM_SELECTORS-1;
 
-signal read_response_fifo_data : std_logic_vector(527 downto 0);
+signal read_response_fifo_data : std_logic_vector(529 downto 0);
 signal read_response_fifo_wrreq : std_logic;
 signal read_response_fifo_rdreq : std_logic;
 signal read_response_fifo_rdreq_1d : std_logic;
-signal read_response_fifo_q : std_logic_vector(527 downto 0);
+signal read_response_fifo_q : std_logic_vector(529 downto 0);
 signal read_response_fifo_rdempty : std_logic;
 signal read_response_fifo_rdempty_1d : std_logic;
 signal read_response_fifo_wrfull : std_logic;
@@ -277,7 +280,6 @@ if clk_400'event and clk_400 = '1' then
 end if;
 end process;
 
-read_length <= B"00";
 read_sop <= '1';
 write_length <= B"00";
 write_sop <= '1';
@@ -311,8 +313,10 @@ GenSelector: for n in 0 to NUM_SELECTORS-1 generate
         write_response => write_response_200(n),
         write_response_transactionID => write_response_transactionID_200(n),
 
+        read_length => read_length_200(n),
+
         read_response_format => read_response_format,
-        read_response_cacheline_number => read_response_cacheline_number,
+        read_response_cacheline_number => read_response_cacheline_number_200(n),
         write_response_format => write_response_format,
         write_response_cacheline_number => write_response_cacheline_number,
         multi_cacheline_length => multi_cacheline_length,
@@ -337,28 +341,87 @@ end generate GenSelector;
 read_request <= not read_request_fifo_rdempty(current_read_request_fifo);
 read_request_address <= read_request_fifo_q(current_read_request_fifo)(ADDRESS_WIDTH-1 downto 0);
 read_request_transactionID <= std_logic_vector(to_unsigned(current_read_request_fifo, 2)) & read_request_fifo_q(current_read_request_fifo)(13+ADDRESS_WIDTH downto ADDRESS_WIDTH);
+read_length <= read_request_fifo_q(current_read_request_fifo)(59 downto 58);
 
+Gen_read_request_1: if NUM_SELECTORS = 1 generate
 process(clk_400)
 begin
 if clk_400'event and clk_400 = '1' then
-    if current_read_request_fifo = NUM_SELECTORS-1 or resetn = '0' then
+    current_read_request_fifo <= 0;
+end if;
+end process;
+end generate;
+Gen_read_request_2: if NUM_SELECTORS = 2 generate
+process(clk_400)
+begin
+if clk_400'event and clk_400 = '1' then
+    if current_read_request_fifo = 0 and read_request_fifo_rdempty(1) = '0' then
+        current_read_request_fifo <= 1;
+    elsif current_read_request_fifo = 1 and read_request_fifo_rdempty(0) = '0' then
         current_read_request_fifo <= 0;
+    elsif read_request_fifo_rdempty(1) = '0' then
+        current_read_request_fifo <= 1;
     else
-        current_read_request_fifo <= current_read_request_fifo + 1;
+        current_read_request_fifo <= 0;
     end if;
 end if;
 end process;
+end generate;
+Gen_read_request_3: if NUM_SELECTORS = 3 generate
+process(clk_400)
+begin
+if clk_400'event and clk_400 = '1' then
+    if current_read_request_fifo = 0 and read_request_fifo_rdempty(1) = '0' then
+        current_read_request_fifo <= 1;
+    elsif current_read_request_fifo = 1 and read_request_fifo_rdempty(2) = '0' then
+        current_read_request_fifo <= 2;
+    elsif current_read_request_fifo = 2 and read_request_fifo_rdempty(0) = '0' then
+        current_read_request_fifo <= 0;
+    elsif read_request_fifo_rdempty(2) = '0' then
+        current_read_request_fifo <= 2;
+    elsif read_request_fifo_rdempty(1) = '0' then
+        current_read_request_fifo <= 1;
+    else
+        current_read_request_fifo <= 0;
+    end if;
+end if;
+end process;
+end generate;
+Gen_read_request_4: if NUM_SELECTORS = 4 generate
+process(clk_400)
+begin
+if clk_400'event and clk_400 = '1' then
+    if current_read_request_fifo = 0 and read_request_fifo_rdempty(1) = '0' then
+        current_read_request_fifo <= 1;
+    elsif current_read_request_fifo = 1 and read_request_fifo_rdempty(2) = '0' then
+        current_read_request_fifo <= 2;
+    elsif current_read_request_fifo = 2 and read_request_fifo_rdempty(3) = '0' then
+        current_read_request_fifo <= 3;
+    elsif current_read_request_fifo = 3 and read_request_fifo_rdempty(0) = '0' then
+        current_read_request_fifo <= 0;
+    elsif read_request_fifo_rdempty(3) = '0' then
+        current_read_request_fifo <= 3;
+    elsif read_request_fifo_rdempty(2) = '0' then
+        current_read_request_fifo <= 2;
+    elsif read_request_fifo_rdempty(1) = '0' then
+        current_read_request_fifo <= 1;
+    else
+        current_read_request_fifo <= 0;
+    end if;
+end if;
+end process;
+end generate;
 
 Gen_read_request: for n in 0 to NUM_SELECTORS-1 generate
     read_request_fifo_rdreq(n) <= read_request_accept when current_read_request_fifo = n else '0';
 
-    read_request_fifo_data(n) <= read_request_transactionID_200(n) & read_request_address_200(n);
+    read_request_fifo_data(n) <= read_length_200(n) & read_request_transactionID_200(n) & read_request_address_200(n);
     read_request_fifo_wrreq(n) <= read_request_200(n);
     read_request_accept_200(n) <= not read_request_fifo_wrfull(n);
 
     read_request_fifo: async_fifo
     generic map (
-        FIFO_WIDTH => 58,
+        FIFO_WIDTH => 60,
         FIFO_DEPTH_BITS => FIFO_DEPTH_BITS,
         ACK => 1)
     port map(
@@ -389,6 +452,7 @@ if clk_200'event and clk_200 = '1' then
 
     read_response_data_200 <= (others => read_response_fifo_q(511 downto 0));
     read_response_transactionID_200 <= (others => read_response_fifo_q(527 downto 512));
+    read_response_cacheline_number_200 <= (others => read_response_fifo_q(529 downto 528));
     read_response_200 <= (others => '0');
     if read_response_fifo_rdreq_1d = '1' then
         read_response_200(current_read_response_fifo) <= read_response_fifo_rdreq_1d and (not read_response_fifo_rdempty_1d);
@@ -396,11 +460,11 @@ if clk_200'event and clk_200 = '1' then
 end if;
 end process;
 
-read_response_fifo_data <= read_response_transactionID & read_response_data;
+read_response_fifo_data <= read_response_cacheline_number & read_response_transactionID & read_response_data;
 read_response_fifo_wrreq <= read_response;
 read_response_fifo: async_fifo
 generic map (
-    FIFO_WIDTH => 528,
+    FIFO_WIDTH => 530,
     FIFO_DEPTH_BITS => FIFO_DEPTH_BITS,
     ACK => 0)
 port map(

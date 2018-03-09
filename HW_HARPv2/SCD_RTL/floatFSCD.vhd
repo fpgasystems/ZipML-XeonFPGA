@@ -29,6 +29,7 @@ port(
 	read_request : out std_logic;
 	read_request_address : out std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	read_request_tid : out std_logic_vector(15 downto 0);
+	read_request_length : out std_logic_vector(1 downto 0);
 	read_request_almostfull : in std_logic;
 
 	read_response : in std_logic;
@@ -225,6 +226,7 @@ port (
 	read_request : out std_logic;
 	read_request_address : out std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	read_request_tid : out std_logic_vector(15 downto 0);
+	read_request_length : out std_logic_vector(1 downto 0);
 	read_request_almostfull : in std_logic;
 
 	read_response : in std_logic;
@@ -340,6 +342,7 @@ port map (
 	read_request => read_request,
 	read_request_address => read_request_address,
 	read_request_tid => read_request_tid,
+	read_request_length => read_request_length,
 	read_request_almostfull => read_request_almostfull,
 
 	read_response => read_response,

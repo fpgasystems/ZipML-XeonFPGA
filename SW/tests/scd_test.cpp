@@ -42,10 +42,10 @@ int main(int argc, char* argv[]) {
 
 	uint32_t stepSizeShifter = 3;
 	uint32_t numEpochs = 2;
-	uint32_t miniBatchSize = 512;
+	uint32_t miniBatchSize = 256;
 
 	// Do SCD
-	scd scd_app(1);
+	scd scd_app(0);
 
 	// scd_app.load_libsvm_data(pathToDataset, numSamples, numFeatures);
 	// scd_app.a_normalize(0, 'c');
@@ -55,24 +55,60 @@ int main(int argc, char* argv[]) {
 
 	scd_app.print_samples(1);
 
-	// scd_app.float_linreg_SGD(NULL, numEpochs, numSamples, 1.0/(1 << stepSizeShifter));
-	// scd_app.float_linreg_SGD(NULL, numEpochs, miniBatchSize, 1.0/(1 << 12));
+	
 
-	// scd_app.float_linreg_SCD(NULL, numEpochs, numSamples, 1.0/(1 << stepSizeShifter));
-	scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter));
+	scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
 
-	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, numSamples, 1.0/(1 << stepSizeShifter));
-	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, 1024, 1.0/(1 << stepSizeShifter));
+	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, VALUE_TO_INT_SCALER);
 
-	// scd_app.AVXmulti_float_linreg_SCD(NULL, numEpochs, 1024, 1.0/(1 << stepSizeShifter));
+	// scd_app.AVXmulti_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, VALUE_TO_INT_SCALER);
 
-	float compressionRate = scd_app.compress_a(miniBatchSize, VALUE_TO_INT_SCALER);
-	cout << "compressionRate: " << compressionRate << endl;
-	scd_app.compressed_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), VALUE_TO_INT_SCALER);
+	// float compressionRate = scd_app.compress_a(miniBatchSize, VALUE_TO_INT_SCALER);
+	// cout << "compressionRate: " << compressionRate << endl;
+
+	scd_app.encrypt_a(miniBatchSize);
+
+	scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 1, 0, VALUE_TO_INT_SCALER);
+
+	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 1, VALUE_TO_INT_SCALER);
+
+	// scd_app.AVXmulti_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 1, VALUE_TO_INT_SCALER);
+
+	// scd_app.float_linreg_FSCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER, 4);
 
 
 
-	scd_app.linreg_FSCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
+
+	// unsigned char initKey[32];
+	// for (uint32_t i = 0; i < 32; i++) {
+	// 	initKey[i] = (unsigned char)i;
+	// }
+	// unsigned char KEYS_enc[16*15];
+	// unsigned char KEYS_dec[16*15];
+	// AES_256_Key_Expansion(initKey, KEYS_enc);
+	// AES_256_Decryption_Keys(KEYS_enc, KEYS_dec);
+	// unsigned char ivec[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+
+	
+	// unsigned char* encryptedColumn = (unsigned char*)malloc(numSamples*sizeof(float));
+	// unsigned char* decryptedColumn = (unsigned char*)malloc(numSamples*sizeof(float));
+
+
+	// AES_CBC_encrypt((unsigned char*)scd_app.a[0], encryptedColumn, ivec, numSamples*sizeof(float), KEYS_enc, 14);
+	// for (uint32_t i = 0; i < 10; i++) {
+	// 	cout << "scd_app.a[0][" << i << "]: " << scd_app.a[0][i] << endl;
+	// 	cout << "encryptedColumn[" << i << "]: " << hex << ((int*)encryptedColumn)[i] << dec << endl;
+	// }
+	// cout << "--------------------------------" << endl;
+	
+
+	// AES_CBC_decrypt(encryptedColumn, decryptedColumn, ivec, numSamples*sizeof(float), KEYS_dec, 14);
+	// for (uint32_t i = 0; i < 10; i++) {
+	// 	cout << "scd_app.a[0][" << i << "]: " << scd_app.a[0][i] << endl;
+	// 	cout << "decryptedColumn[" << i << "]: " << hex << ((float*)decryptedColumn)[i] << dec << endl;
+	// }
+	// free(encryptedColumn);
+	// free(decryptedColumn);
 
 
 

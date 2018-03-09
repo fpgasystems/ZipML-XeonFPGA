@@ -11,6 +11,7 @@
 #include <cmath>
 
 #include "../driver/iFPGA.h"
+#include "aes.h"
 
 #ifdef AVX2
 #include "immintrin.h"
@@ -29,6 +30,7 @@ public:
 
 	uint32_t** compressed_a;
 	uint32_t** compressed_a_sizes;
+	uint32_t** encrypted_a;
 
 	uint32_t numFeatures;
 	uint32_t numSamples;
@@ -49,6 +51,11 @@ public:
 	uint32_t page_size_in_cache_lines;
 	uint32_t pages_to_allocate;
 	uint32_t numValuesPerLine;
+
+	unsigned char initKey[32];
+	unsigned char* KEYS_enc;
+	unsigned char* KEYS_dec;
+	unsigned char ivec[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 
 	scd(char getFPGA){
 		page_size_in_cache_lines = 65536; // 65536 x 64B = 4 MB
@@ -75,6 +82,15 @@ public:
 		b = NULL;
 
 		compressed_a = NULL;
+		encrypted_a = NULL;
+
+		for (uint32_t i = 0; i < 32; i++) {
+			initKey[i] = (unsigned char)i;
+		}
+		KEYS_enc = (unsigned char*)malloc(16*15);
+		KEYS_dec = (unsigned char*)malloc(16*15);
+		AES_256_Key_Expansion(initKey, KEYS_enc);
+		AES_256_Decryption_Keys(KEYS_enc, KEYS_dec);
 	}
 	~scd() {
 		if (gotFPGA == 1)
@@ -97,6 +113,15 @@ public:
 			free(compressed_a);
 			free(compressed_a_sizes);
 		}
+		if (encrypted_a != NULL) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				free(encrypted_a[j]);
+			}
+			free(encrypted_a);
+		}
+
+		free(KEYS_enc);
+		free(KEYS_dec);
 	}
 
 	void print_samples(uint32_t num) {
@@ -118,14 +143,15 @@ public:
 	void a_normalize(char toMinus1_1, char rowOrColumnWise);
 	void b_normalize(char toMinus1_1, char binarize_b, float b_toBinarizeTo);
 	float compress_a(uint32_t minibatchSize, uint32_t toIntegerScaler);
+	void encrypt_a(uint32_t minibatchSize);
 
 	float calculate_loss(float* x);
 
 	void float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
-	void float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useCompressed, uint32_t toIntegerScaler);
+	void float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 #ifdef AVX2
-	void AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useCompressed, uint32_t toIntegerScaler);
-	void AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useCompressed, uint32_t toIntegerScaler);
+	void AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
+	void AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 #endif
 
 	uint32_t print_FPGA_memory();
@@ -133,9 +159,11 @@ public:
 	uint32_t copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs);
 	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse);
 	
-
 	uint32_t decompress_column(uint32_t* compressedColumn, uint32_t inNumWords, float* decompressedColumn, uint32_t toIntegerScaler);
 	uint32_t compress_column(float* originalColumn, uint32_t inNumWords, uint32_t* compressedColumn, uint32_t toIntegerScaler);
+
+	void decrypt_column(uint32_t* encryptedColumn, uint32_t inNumWords, float* decryptedColumn);
+	void encrypt_column(float* originalColumn, uint32_t inNumWords, uint32_t* encryptedColumn);
 };
 
 void scd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures) {
@@ -375,6 +403,21 @@ float scd::compress_a(uint32_t minibatchSize, uint32_t toIntegerScaler) {
 	return compressionRate;
 }
 
+void scd::encrypt_a(uint32_t minibatchSize) {
+	uint32_t numMinibatches = numSamples/minibatchSize;
+	cout << "numMinibatches: " << numMinibatches << endl;
+	uint32_t rest = numSamples - numMinibatches*minibatchSize;
+	cout << "rest: " << rest << endl;
+
+	encrypted_a = (uint32_t**)malloc(numFeatures*sizeof(uint32_t*));
+	for (uint32_t j = 0; j < numFeatures; j++) {
+		encrypted_a[j] = (uint32_t*)aligned_alloc(64, numSamples*sizeof(uint32_t));
+		for (uint32_t m = 0; m < numMinibatches; m++) {
+			encrypt_column(a[j] + m*minibatchSize, minibatchSize, encrypted_a[j] + m*minibatchSize);
+		}
+	}
+}
+
 static void shuffle(uint32_t* indexes, uint32_t size) {
 	for (uint32_t j = 0; j < size; j++) {
 		uint32_t rand_j = size*((float)(rand()-1)/(float)RAND_MAX);
@@ -453,7 +496,7 @@ void scd::float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 	free(gradient);
 }
 
-void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useCompressed, uint32_t toIntegerScaler) {
+void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler) {
 	float* residual = (float*)aligned_alloc(64, numSamples*sizeof(float));
 	memset(residual, 0, numSamples*sizeof(float));
 
@@ -469,7 +512,7 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 	cout << "Initial loss: " << calculate_loss(x_end) << endl;
 
-	float* decompressedColumn = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	float* transformedColumn = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
 
 	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
 
@@ -484,10 +527,17 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 					int32_t compressed_a_offset = 0;
 					if (m > 0)
 						compressed_a_offset = compressed_a_sizes[j][m-1];
-					uint32_t decompressedMiniBatchSize = decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, decompressedColumn, toIntegerScaler);
+					uint32_t decompressedMiniBatchSize = decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn, toIntegerScaler);
 
 					for (uint32_t i = 0; i < minibatchSize; i++) {
-						gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*decompressedColumn[i];
+						gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*transformedColumn[i];
+					}
+				}
+				else if (useEncrypted == 1) {
+					decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn);
+
+					for (uint32_t i = 0; i < minibatchSize; i++) {
+						gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*transformedColumn[i];
 					}
 				}
 				else {
@@ -495,14 +545,14 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 						gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
 					}
 				}
-				cout << "gradient: " << gradient << endl;
+				// cout << "gradient: " << gradient << endl;
 				float step = stepSize*(gradient/minibatchSize);
-				cout << "step: " << step << endl;
+				// cout << "step: " << step << endl;
 				x[m*numFeatures + j] -= step;
 
-				if (useCompressed == 1) {
+				if (useCompressed == 1 || useEncrypted == 1) {
 					for (uint32_t i = 0; i < minibatchSize; i++) {
-						residual[m*minibatchSize + i] -= step*decompressedColumn[i];
+						residual[m*minibatchSize + i] -= step*transformedColumn[i];
 					}
 				}
 				else {
@@ -539,14 +589,14 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 		cout << epoch << endl;
 	}
 
-	free(decompressedColumn);
+	free(transformedColumn);
 	free(x);
 	free(x_end);
 	free(residual);
 }
 
 #ifdef AVX2
-void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useCompressed, uint32_t toIntegerScaler) {
+void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler) {
 	if (minibatchSize%8 == 8) {
 		cout << "For AVX minibatchSize%8 must be 0!" << endl;
 		exit(1);
@@ -570,7 +620,7 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 
 	cout << "Initial loss: " << calculate_loss(x_end) << endl;
 
-	float* decompressedColumn = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	float* transformedColumn = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
 
 	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
 
@@ -580,19 +630,22 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 		__m256 a_temp;
 		__m256 b_temp;
 
-		if (useCompressed == 1) {
+		if (useCompressed == 1 || useEncrypted == 1) {
 			for (uint32_t m = 0; m < numMinibatches; m++) {
 				for (uint32_t j = 0; j < numFeatures; j++) {
 					__m256 gradient = _mm256_setzero_ps();
 
-					int32_t compressed_a_offset = 0;
-					if (m > 0)
-						compressed_a_offset = compressed_a_sizes[j][m-1];
-					uint32_t decompressedMiniBatchSize = decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, decompressedColumn, toIntegerScaler);
-
+					if (useCompressed == 1)
+						int32_t compressed_a_offset = 0;
+						if (m > 0)
+							compressed_a_offset = compressed_a_sizes[j][m-1];
+						uint32_t decompressedMiniBatchSize = decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn, toIntegerScaler);
+					else if (useEncrypted == 1) {
+						decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn);
+					}
 
 					for (uint32_t i = 0; i < minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(decompressedColumn + i);
+						a_temp = _mm256_load_ps(transformedColumn + i);
 						b_temp = _mm256_load_ps(b + m*minibatchSize + i);
 						residual_temp = _mm256_load_ps(residual + m*minibatchSize + i);
 
@@ -618,7 +671,7 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 					x[m*numFeatures + j] += stepReduce[0];
 
 					for (uint32_t i = 0; i < minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(decompressedColumn + i);
+						a_temp = _mm256_load_ps(transformedColumn + i);
 						residual_temp = _mm256_load_ps(residual + m*minibatchSize + i);
 						residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
 
@@ -695,7 +748,7 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 		cout << epoch << endl;
 	}
 
-	free(decompressedColumn);
+	free(transformedColumn);
 	free(x);
 	free(x_end);
 	free(residual);
@@ -719,6 +772,7 @@ typedef struct {
 	float* x_history;
 	scd* app;
 	char useCompressed;
+	char useEncrypted;
 	uint32_t toIntegerScaler;
 } batch_thread_data;
 
@@ -728,7 +782,7 @@ void* batch_thread(void* args) {
 	float scaledStepSize = -r->stepSize/(float)r->minibatchSize;
 	__m256 scaledStepSize_temp = _mm256_set1_ps(scaledStepSize);
 
-	float* decompressedColumn = (float*)aligned_alloc(64, r->minibatchSize*sizeof(float));
+	float* transformedColumn = (float*)aligned_alloc(64, r->minibatchSize*sizeof(float));
 
 	double start, end;
 
@@ -741,19 +795,24 @@ void* batch_thread(void* args) {
 		__m256 a_temp;
 		__m256 b_temp;
 
-		if (r->useCompressed == 1) {
+		if (r->useCompressed == 1 || r->useEncrypted == 1) {
 
 			for (uint32_t m = r->startingBatch; m < r->startingBatch + r->numBatchesToProcess; m++) {
 				for (uint32_t j = 0; j < r->numFeatures; j++) {
 					__m256 gradient = _mm256_setzero_ps();
 
-					int32_t compressed_a_offset = 0;
-					if (m > 0)
-						compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
-					uint32_t decompressedMiniBatchSize = r->app->decompress_column(r->app->compressed_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, decompressedColumn, r->toIntegerScaler);
+					if (r->useCompressed == 1) {
+						int32_t compressed_a_offset = 0;
+						if (m > 0)
+							compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
+						uint32_t decompressedMiniBatchSize = r->app->decompress_column(r->app->compressed_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn, r->toIntegerScaler);
+					}
+					else if (r->useEncrypted == 1) {
+						decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn);
+					}
 
 					for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(decompressedColumn + i);
+						a_temp = _mm256_load_ps(transformedColumn + i);
 						b_temp = _mm256_load_ps(r->b + m*r->minibatchSize + i);
 						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
 
@@ -779,7 +838,7 @@ void* batch_thread(void* args) {
 					r->x[m*r->numFeatures + j] += stepReduce[0];
 
 					for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(decompressedColumn + i);
+						a_temp = _mm256_load_ps(transformedColumn + i);
 						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
 						residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
 
@@ -857,7 +916,7 @@ void* batch_thread(void* args) {
 		}
 	}
 
-	free(decompressedColumn);
+	free(transformedColumn);
 
 	return NULL;
 }
@@ -1583,6 +1642,14 @@ uint32_t scd::compress_column(float* originalColumn, uint32_t inNumWords, uint32
 	}
 
 	return numWords;
+}
+
+void scd::decrypt_column(uint32_t* encryptedColumn, uint32_t inNumWords, float* decryptedColumn) {
+	AES_CBC_decrypt((unsigned char*)encryptedColumn, (unsigned char*)decryptedColumn, ivec, inNumWords*sizeof(float), KEYS_dec, 14);
+}
+
+void scd::encrypt_column(float* originalColumn, uint32_t inNumWords, uint32_t* encryptedColumn) {
+	AES_CBC_encrypt((unsigned char*)originalColumn, (unsigned char*)encryptedColumn, ivec, inNumWords*sizeof(float), KEYS_enc, 14);
 }
 
 #endif

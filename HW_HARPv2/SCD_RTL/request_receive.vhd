@@ -33,6 +33,7 @@ port (
 	read_request : out std_logic;
 	read_request_address : out std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	read_request_tid : out std_logic_vector(15 downto 0);
+	read_request_length : out std_logic_vector(1 downto 0);
 	read_request_almostfull : in std_logic;
 
 	read_response : in std_logic;
@@ -93,6 +94,8 @@ signal i_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 signal i_receive_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 
 signal new_column_read_allowed : std_logic;
+
+signal column_offset_intermediate : unsigned(31 downto 0);
 
 signal column_offset_raddr : std_logic_vector(LOG2_MAX_NUMFEATURES-4-1 downto 0);
 signal column_offset_waddr : std_logic_vector(LOG2_MAX_NUMFEATURES-4-1 downto 0);
@@ -209,6 +212,9 @@ if clk'event and clk = '1' then
 
 	NumberOfPendingReads <= NumberOfRequestedReads - NumberOfReceivedReads;
 
+	column_offset_intermediate <= 	unsigned( column_offset_dout( feature_index_in_line*32+31 downto feature_index_in_line*32 ) ) +
+									unsigned( column_previous_readsize_dout( feature_index_in_line*32+31 downto feature_index_in_line*32 ) );
+
 	if resetn = '0' or restart = '1' then
 		read_request <= '0';
 
@@ -254,6 +260,7 @@ if clk'event and clk = '1' then
 			read_request <= '1';
 			read_request_tid <= B"00" & std_logic_vector(NumberOfRequestedReads(13 downto 0));
 			NumberOfRequestedReads <= NumberOfRequestedReads + 1;
+
 			if NumberOfRequestedReads = 0 then
 				reorder_start_address_adjust <= '1';
 				reorder_start_address <= (others => '0');
@@ -261,6 +268,7 @@ if clk'event and clk = '1' then
 
 			if read_state = B"00" then
 				read_request_address <= std_logic_vector(unsigned(a_address) + offset_read_index);
+				read_request_length <= B"00";
 
 				column_previous_readsize_we <= '1';
 				column_previous_readsize_din <= (others => '0');
@@ -275,28 +283,72 @@ if clk'event and clk = '1' then
 				end if;
 			elsif read_state = B"01" then --read residual
 				read_request_address <= std_logic_vector(unsigned(residual_address) + iBATCH_OFFSET + i_index);
+				read_request_length <= B"00";
+				residual_NumberOfRequestedReads <= residual_NumberOfRequestedReads + 1;
+
 				if i_index = iBATCH_SIZE-1 then
 					i_index <= (others => '0');
 					read_state <= B"10";
 				else
-					i_index <= i_index + 1;
+
+					if (i_index+4) < iBATCH_SIZE-1
+						and i_index(1 downto 0) = B"00"
+						and residual_address(1 downto 0) = B"00"
+						and iBATCH_OFFSET(1 downto 0) = B"00" then
+						read_request_length <= B"11";
+						i_index <= i_index + 4;
+						NumberOfRequestedReads <= NumberOfRequestedReads + 4;
+						residual_NumberOfRequestedReads <= residual_NumberOfRequestedReads + 4;
+					elsif (i_index+2) < iBATCH_SIZE-1
+						and i_index(0) = '0'
+						and residual_address(0) = '0'
+						and iBATCH_OFFSET(0) = '0' then
+						read_request_length <= B"01";
+						i_index <= i_index + 2;
+						NumberOfRequestedReads <= NumberOfRequestedReads + 2;
+						residual_NumberOfRequestedReads <= residual_NumberOfRequestedReads + 2;
+					else
+						read_request_length <= B"00";
+						i_index <= i_index + 1;
+					end if;
 				end if;
-				residual_NumberOfRequestedReads <= residual_NumberOfRequestedReads + 1;
 			elsif read_state = B"10" then --read b
 				read_request_address <= std_logic_vector(unsigned(b_address) + iBATCH_OFFSET + i_index);
+				read_request_length <= B"00";
+				b_NumberOfRequestedReads <= b_NumberOfRequestedReads + 1;
+
 				if i_index = iBATCH_SIZE-1 then
 					i_index <= (others => '0');
 					read_state <= B"11";
 				else
-					i_index <= i_index + 1;
+
+					if (i_index+4) < iBATCH_SIZE-1
+						and i_index(1 downto 0) = B"00"
+						and b_address(1 downto 0) = B"00"
+						and iBATCH_OFFSET(1 downto 0) = B"00" then
+						read_request_length <= B"11";
+						i_index <= i_index + 4;
+						NumberOfRequestedReads <= NumberOfRequestedReads + 4;
+						b_NumberOfRequestedReads <= b_NumberOfRequestedReads + 4;
+					elsif (i_index+2) < iBATCH_SIZE-1
+						and i_index(0) = '0'
+						and b_address(0) = '0'
+						and iBATCH_OFFSET(0) = '0' then
+						read_request_length <= B"01";
+						i_index <= i_index + 2;
+						NumberOfRequestedReads <= NumberOfRequestedReads + 2;
+						b_NumberOfRequestedReads <= b_NumberOfRequestedReads + 2;
+					else
+						read_request_length <= B"00";
+						i_index <= i_index + 1;
+					end if;
 				end if;
-				b_NumberOfRequestedReads <= b_NumberOfRequestedReads + 1;
 			else -- read a
 				read_request_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');
-				read_request_address(31 downto 0) <= std_logic_vector(	
-															unsigned( column_offset_dout( (feature_index_in_line+1)*32-1 downto feature_index_in_line*32 ) ) +
-															unsigned( column_previous_readsize_dout( (feature_index_in_line+1)*32-1 downto feature_index_in_line*32 ) ) +
-															i_index);
+				read_request_address(31 downto 0) <= std_logic_vector(column_offset_intermediate + i_index);
+				read_request_length <= B"00";
+				a_NumberOfRequestedReads <= a_NumberOfRequestedReads + 1;
+
 				if read_size_from_memory = '1' then
 					if i_index = 0 then
 						new_column_read_allowed <= '0';
@@ -318,13 +370,29 @@ if clk'event and clk = '1' then
 					end if;
 					column_previous_readsize_we <= '1';
 					column_previous_readsize_din <= column_previous_readsize_dout;
-					column_previous_readsize_din((feature_index_in_line+1)*32-1 downto feature_index_in_line*32) <= std_logic_vector( unsigned( column_previous_readsize_dout((feature_index_in_line+1)*32-1 downto feature_index_in_line*32) ) + iREAD_SIZE );
+					column_previous_readsize_din(feature_index_in_line*32+31 downto feature_index_in_line*32) <= std_logic_vector( unsigned( column_previous_readsize_dout(feature_index_in_line*32+31 downto feature_index_in_line*32) ) + iREAD_SIZE );
 					column_previous_readsize_waddr <= std_logic_vector( feature_index(LOG2_MAX_NUMFEATURES-1 downto 4) );
 				else
-					i_index <= i_index + 1;
+					
+					if (i_index+4) < iREAD_SIZE-1
+						and i_index(1 downto 0) = B"00"
+						and column_offset_intermediate(1 downto 0) = B"00" then
+						read_request_length <= B"11";
+						i_index <= i_index + 4;
+						NumberOfRequestedReads <= NumberOfRequestedReads + 4;
+						a_NumberOfRequestedReads <= a_NumberOfRequestedReads + 4;
+					elsif (i_index+2) < iREAD_SIZE-1
+						and i_index(0) = '0'
+						and column_offset_intermediate(0) = '0' then
+						read_request_length <= B"01";
+						i_index <= i_index + 2;
+						NumberOfRequestedReads <= NumberOfRequestedReads + 2;
+						a_NumberOfRequestedReads <= a_NumberOfRequestedReads + 2;
+					else
+						read_request_length <= B"00";
+						i_index <= i_index + 1;
+					end if;
 				end if;
-
-				a_NumberOfRequestedReads <= a_NumberOfRequestedReads + 1;
 			end if;
 		end if;
 
