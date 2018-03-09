@@ -571,9 +571,9 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 					gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*transformedColumn2[i];
 				}
 
-				cout << "gradient: " << gradient << endl;
+				// cout << "gradient: " << gradient << endl;
 				float step = stepSize*(gradient/minibatchSize);
-				cout << "step: " << step << endl;
+				// cout << "step: " << step << endl;
 				x[m*numFeatures + j] -= step;
 
 				for (uint32_t i = 0; i < minibatchSize; i++) {
@@ -796,7 +796,7 @@ void* batch_thread(void* args) {
 		transformedColumn1 = (float*)aligned_alloc(64, r->minibatchSize*sizeof(float));
 		transformedColumn2 = (float*)aligned_alloc(64, r->minibatchSize*sizeof(float));
 	}
-	else if (useEncrypted == 1 || useCompressed == 1) {
+	else if (r->useEncrypted == 1 || r->useCompressed == 1) {
 		transformedColumn2 = (float*)aligned_alloc(64, r->minibatchSize*sizeof(float));
 	}
 
@@ -823,7 +823,7 @@ void* batch_thread(void* args) {
 					r->app->decompress_column((uint32_t*)transformedColumn1, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, r->toIntegerScaler);
 				}
 				else if (r->useEncrypted == 1) {
-					decrypt_column(r->app->encrypted_a[j] + m*r->minibatchSize, r->minibatchSize, transformedColumn2);
+					r->app->decrypt_column(r->app->encrypted_a[j] + m*r->minibatchSize, r->minibatchSize, transformedColumn2);
 				}
 				else if (r->useCompressed == 1) {
 					int32_t compressed_a_offset = 0;
@@ -898,12 +898,17 @@ void* batch_thread(void* args) {
 		}
 	}
 
-	free(transformedColumn);
-
+	if (r->useEncrypted == 1 && r->useCompressed == 1) {
+		free(transformedColumn1);
+		free(transformedColumn2);
+	}
+	else if (r->useEncrypted == 1 || r->useCompressed == 1) {
+		free(transformedColumn2);
+	}
 	return NULL;
 }
 
-void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useCompressed, uint32_t toIntegerScaler) {
+void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler) {
 	if (minibatchSize%8 == 8) {
 		cout << "For AVX minibatchSize%8 must be 0!" << endl;
 		exit(1);
@@ -956,6 +961,7 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32
 		args[n].x_history = x_history;
 		args[n].app = this;
 		args[n].useCompressed = useCompressed;
+		args[n].useEncrypted = useEncrypted;
 		args[n].toIntegerScaler = toIntegerScaler;
 
 		pthread_create(&threads[n], &attr, batch_thread, (void*)&args[n]);
