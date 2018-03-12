@@ -86,6 +86,8 @@ signal b_NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
 signal a_NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
 signal residual_NumberOfWriteRequests : unsigned(31 downto 0) := (others => '0');
 signal step_NumberOfWriteRequests : unsigned(31 downto 0) := (others => '0');
+signal NumberOfWriteRequests : unsigned(31 downto 0) := (others => '0');
+signal NumberOfPendingWrites : unsigned(31 downto 0) := (others => '0');
 signal NumberOfWriteResponses : unsigned(31 downto 0) := (others => '0');
 
 signal i_receive_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
@@ -503,6 +505,9 @@ port map (
 process(clk)
 begin
 if clk'event and clk = '1' then
+	NumberOfWriteRequests <= step_NumberOfWriteRequests + residual_NumberOfWriteRequests;
+	NumberOfPendingWrites <= NumberOfWriteRequests - NumberOfWriteResponses;
+
 	for k in 1 to INPUT_VECTOR_DELAY_CYCLES loop
 		input_vector(k) <= input_vector(k-1);
 	end loop;
@@ -640,7 +645,7 @@ if clk'event and clk = '1' then
 
 
 		residual_writeback_re <= '0';
-		if write_residual_back = '1' and write_request_almostfull = '0' then
+		if write_residual_back = '1' and write_request_almostfull = '0' and NumberOfPendingWrites < 220 then
 			residual_store_loading_re <= '1';
 			residual_writeback_re <= '1';
 			residual_store_loading_raddr <= std_logic_vector(i_writeback_index);

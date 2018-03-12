@@ -300,8 +300,10 @@ port map (
 	q => wrapper_read_response_tid);
 
 
-parti_start <= start and (not src_bram_verified) and (not dst_bram_verified) when unsigned(number_of_batches) > 0 else '0';
-done <= parti_done when unsigned(number_of_batches) > 0 else (start and (not src_bram_verified) and (not dst_bram_verified));
+parti_start <= start when (unsigned(number_of_batches) > 0 and addr_reset = X"FFFFFFFF") else '0';
+done <= parti_done when unsigned(number_of_batches) > 0 else 
+		start when addr_reset = X"FFFFFFFF" and unsigned(instance_id) > 0 else
+		'0';
 FSCD: floatFSCD
 generic map (
 	ADDRESS_WIDTH => ADDRESS_WIDTH,
@@ -423,8 +425,6 @@ if clk_200'event and clk_200 = '1' then
 	read_response_cacheline_number_1d <= read_response_cacheline_number;
 
 	if resetn = '0' then
-		--clock_200 <= '0';
-
 		read_request <= '0';
 		write_request <= '0';
 
@@ -500,13 +500,21 @@ if clk_200'event and clk_200 = '1' then
 				verify_base <= dst_addr;
 			end if;
 		elsif addr_reset = X"00000003" and src_bram_verified = '0' then
-			src_bram_verify <= '1';
-			src_bram_verify_index <= (others => '0');
+			if ID = 0 then
+				src_bram_verify <= '1';
+			else
+				src_bram_verify <= '0';
+			end if;
 			src_bram_verified <= '1';
+			src_bram_verify_index <= (others => '0');
 		elsif addr_reset = X"00000004" and dst_bram_verified = '0' then
-			dst_bram_verify <= '1';
-			dst_bram_verify_index <= (others => '0');
+			if ID = 0 then
+				dst_bram_verify <= '1';
+			else
+				dst_bram_verify <= '0';
+			end if;
 			dst_bram_verified <= '1';
+			dst_bram_verify_index <= (others => '0');
 		end if;
 
 		src_bram_re <= '0';

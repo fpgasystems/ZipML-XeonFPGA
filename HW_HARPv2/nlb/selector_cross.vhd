@@ -69,6 +69,9 @@ signal resetn_200 : std_logic;
 signal start_200 : std_logic;
 signal done_200 : std_logic_vector(NUM_SELECTORS-1 downto 0);
 
+signal NumberOfWriteRequests : unsigned(31 downto 0) := (others => '0');
+signal NumberOfWriteResponses : unsigned(31 downto 0) := (others => '0');
+
 type address_200_type is array (NUM_SELECTORS-1 downto 0) of std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 type transactionID_200_type is array (NUM_SELECTORS-1 downto 0) of std_logic_vector(15 downto 0);
 type read_length_200_type is array (NUM_SELECTORS-1 downto 0) of std_logic_vector(1 downto 0);
@@ -509,6 +512,8 @@ if clk_400'event and clk_400 = '1' then
         write_request_address_internal <= write_request_fifo_q(0)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(0)(511 downto 0);
         write_request_transactionID_internal <= B"00" & write_request_fifo_q(0)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
+
+        NumberOfWriteRequests <= NumberOfWriteRequests + 1;
     end if;
 end if;
 end process;
@@ -523,11 +528,15 @@ if clk_400'event and clk_400 = '1' then
         write_request_address_internal <= write_request_fifo_q(0)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(0)(511 downto 0);
         write_request_transactionID_internal <= B"00" & write_request_fifo_q(0)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
+
+        NumberOfWriteRequests <= NumberOfWriteRequests + 1;
     elsif write_request_fifo_rdreq_1d(1) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(1)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(1)(511 downto 0);
         write_request_transactionID_internal <= B"01" & write_request_fifo_q(1)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
+
+        NumberOfWriteRequests <= NumberOfWriteRequests + 1;
     end if;
 end if;
 end process;
@@ -542,16 +551,22 @@ if clk_400'event and clk_400 = '1' then
         write_request_address_internal <= write_request_fifo_q(0)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(0)(511 downto 0);
         write_request_transactionID_internal <= B"00" & write_request_fifo_q(0)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
+
+        NumberOfWriteRequests <= NumberOfWriteRequests + 1;
     elsif write_request_fifo_rdreq_1d(1) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(1)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(1)(511 downto 0);
         write_request_transactionID_internal <= B"01" & write_request_fifo_q(1)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
+
+        NumberOfWriteRequests <= NumberOfWriteRequests + 1;
     elsif write_request_fifo_rdreq_1d(2) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(2)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(2)(511 downto 0);
         write_request_transactionID_internal <= B"10" & write_request_fifo_q(2)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
+
+        NumberOfWriteRequests <= NumberOfWriteRequests + 1;
     end if;
 end if;
 end process;
@@ -566,21 +581,29 @@ if clk_400'event and clk_400 = '1' then
         write_request_address_internal <= write_request_fifo_q(0)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(0)(511 downto 0);
         write_request_transactionID_internal <= B"00" & write_request_fifo_q(0)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
+
+        NumberOfWriteRequests <= NumberOfWriteRequests + 1;
     elsif write_request_fifo_rdreq_1d(1) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(1)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(1)(511 downto 0);
         write_request_transactionID_internal <= B"01" & write_request_fifo_q(1)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
+
+        NumberOfWriteRequests <= NumberOfWriteRequests + 1;
     elsif write_request_fifo_rdreq_1d(2) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(2)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(2)(511 downto 0);
         write_request_transactionID_internal <= B"10" & write_request_fifo_q(2)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
+
+        NumberOfWriteRequests <= NumberOfWriteRequests + 1;
     elsif write_request_fifo_rdreq_1d(3) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(3)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(3)(511 downto 0);
         write_request_transactionID_internal <= B"11" & write_request_fifo_q(3)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
+
+        NumberOfWriteRequests <= NumberOfWriteRequests + 1;
     end if;
 end if;
 end process;
@@ -638,6 +661,15 @@ if clk_200'event and clk_200 = '1' then
         else
             write_response_200 <= ( others => (write_response_fifo_rdreq_1d and (not write_response_fifo_rdempty_1d)) );
         end if;
+    end if;
+end if;
+end process;
+
+process(clk_400)
+begin
+if clk_400'event and clk_400 = '1' then
+    if write_response = '1' then
+        NumberOfWriteResponses <= NumberOfWriteResponses + 1;
     end if;
 end if;
 end process;

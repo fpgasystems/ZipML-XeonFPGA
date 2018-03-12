@@ -1157,7 +1157,7 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 			if (n == NUM_FINSTANCES-1)
 				numMinibatchesToAssign[n] = numMinibatches - numMinibatchesAssigned;
 			else
-				numMinibatchesToAssign[n] = numMinibatches/numInstancesToUse + (numMinibatches%NUM_FINSTANCES > 0);
+				numMinibatchesToAssign[n] = numMinibatches/numInstancesToUse + (numMinibatches%numInstancesToUse > 0);
 		}
 		else
 			numMinibatchesToAssign[n] = 0;
