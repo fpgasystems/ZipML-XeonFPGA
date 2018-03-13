@@ -30,8 +30,8 @@ int main(int argc, char* argv[]) {
 	char* pathToDataset;
 	uint32_t numSamples;
 	uint32_t numFeatures;
-	uint32_t useCompression = 0;
 	uint32_t useEncryption = 0;
+	uint32_t useCompression = 0;
 	if (argc != 6) {
 		cout << "Usage: ./ZipML.exe <pathToDataset> <numSamples> <numFeatures> <encrypt> <compress>" << endl;
 		return 0;
@@ -40,16 +40,16 @@ int main(int argc, char* argv[]) {
 		pathToDataset = argv[1];
 		numSamples = atoi(argv[2]);
 		numFeatures = atoi(argv[3]);
-		useCompression = atoi(argv[4]);
-		useEncryption = atoi(argv[5]);
+		useEncryption = atoi(argv[4]);
+		useCompression = atoi(argv[5]);
 	}
 
 	uint32_t stepSizeShifter = 3;
 	uint32_t numEpochs = 2;
-	uint32_t miniBatchSize = 256;
+	uint32_t miniBatchSize = 64;
 
 	// Do SCD
-	scd scd_app(0);
+	scd scd_app(1);
 
 	// scd_app.load_libsvm_data(pathToDataset, numSamples, numFeatures);
 	// scd_app.a_normalize(0, 'c');
@@ -72,18 +72,7 @@ int main(int argc, char* argv[]) {
 
 	scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
 
-	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, VALUE_TO_INT_SCALER);
-
-	// scd_app.AVXmulti_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, VALUE_TO_INT_SCALER);
-
-
-	// scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 1, 0, VALUE_TO_INT_SCALER);
-
-	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 1, VALUE_TO_INT_SCALER);
-
-	// scd_app.AVXmulti_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 1, VALUE_TO_INT_SCALER);
-
-	// scd_app.float_linreg_FSCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER, 4);
+	scd_app.float_linreg_FSCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, useEncryption, useCompression, VALUE_TO_INT_SCALER, 4);
 
 
 

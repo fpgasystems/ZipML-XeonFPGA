@@ -58,7 +58,9 @@ port(
 	config2 : in std_logic_vector(63 downto 0);
 	config3 : in std_logic_vector(63 downto 0);
 	config4 : in std_logic_vector(63 downto 0);
-	config5 : in std_logic_vector(63 downto 0));
+	config5 : in std_logic_vector(63 downto 0);
+    config6 : in std_logic_vector(63 downto 0);
+    config7 : in std_logic_vector(63 downto 0));
 end selector_cross;
 
 architecture behavioral of selector_cross is
@@ -165,6 +167,8 @@ signal config2_1d : std_logic_vector(63 downto 0);
 signal config3_1d : std_logic_vector(63 downto 0);
 signal config4_1d : std_logic_vector(63 downto 0);
 signal config5_1d : std_logic_vector(63 downto 0);
+signal config6_1d : std_logic_vector(63 downto 0);
+signal config7_1d : std_logic_vector(63 downto 0);
 
 signal src_addr_200 : std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 signal dst_addr_200 : std_logic_vector(ADDRESS_WIDTH-1 downto 0);
@@ -177,11 +181,13 @@ signal config2_200 : std_logic_vector(63 downto 0);
 signal config3_200 : std_logic_vector(63 downto 0);
 signal config4_200 : std_logic_vector(63 downto 0);
 signal config5_200 : std_logic_vector(63 downto 0);
+signal config6_200 : std_logic_vector(63 downto 0);
+signal config7_200 : std_logic_vector(63 downto 0);
 
-signal configfifo_data    : std_logic_vector(448+2*ADDRESS_WIDTH-1 downto 0);
+signal configfifo_data    : std_logic_vector(576+2*ADDRESS_WIDTH-1 downto 0);
 signal configfifo_wrreq   : std_logic;
 signal configfifo_rdreq   : std_logic;
-signal configfifo_q       : std_logic_vector(448+2*ADDRESS_WIDTH-1 downto 0);
+signal configfifo_q       : std_logic_vector(576+2*ADDRESS_WIDTH-1 downto 0);
 signal configfifo_rdempty : std_logic;
 signal configfifo_wrfull  : std_logic;
 ----------------------------------------------------------- Configuration Signals END
@@ -259,7 +265,9 @@ port(
     config2 : in std_logic_vector(63 downto 0);
     config3 : in std_logic_vector(63 downto 0);
     config4 : in std_logic_vector(63 downto 0);
-    config5 : in std_logic_vector(63 downto 0));
+    config5 : in std_logic_vector(63 downto 0);
+    config6 : in std_logic_vector(63 downto 0);
+    config7 : in std_logic_vector(63 downto 0));
 end component;
 
 begin
@@ -337,7 +345,9 @@ GenSelector: for n in 0 to NUM_SELECTORS-1 generate
         config2 => config2_200,
         config3 => config3_200,
         config4 => config4_200,
-        config5 => config5_200);
+        config5 => config5_200,
+        config6 => config6_200,
+        config7 => config7_200);
 end generate GenSelector;
 
 ----------------------------------------------------------- read_request START
@@ -704,8 +714,10 @@ if clk_400'event and clk_400 = '1' then
     config3_1d <= config3;
     config4_1d <= config4;
     config5_1d <= config5;
+    config6_1d <= config6;
+    config7_1d <= config7;
 
-    configfifo_data <= src_addr & dst_addr & config5 & config4 & config3 & config2 & config1 & number_of_CL_to_process & addr_reset & read_offset & write_offset;
+    configfifo_data <= src_addr & dst_addr & config7 & config6 & config5 & config4 & config3 & config2 & config1 & number_of_CL_to_process & addr_reset & read_offset & write_offset;
     configfifo_wrreq <= '0';
     if  src_addr_1d /= src_addr or 
         dst_addr_1d /= dst_addr or
@@ -717,7 +729,9 @@ if clk_400'event and clk_400 = '1' then
         config2_1d /= config2 or
         config3_1d /= config3 or
         config4_1d /= config4 or
-        config5_1d /= config5
+        config5_1d /= config5 or
+        config6_1d /= config6 or
+        config7_1d /= config7 
     then
         configfifo_wrreq <= '1';
     end if;
@@ -735,8 +749,10 @@ if clk_200'event and clk_200 = '1' then
 end if;
 end process;
 
-src_addr_200                    <= configfifo_q(448+2*ADDRESS_WIDTH-1 downto 448+ADDRESS_WIDTH);
-dst_addr_200                    <= configfifo_q(448+ADDRESS_WIDTH-1 downto 448);
+src_addr_200                    <= configfifo_q(576+2*ADDRESS_WIDTH-1 downto 576+ADDRESS_WIDTH);
+dst_addr_200                    <= configfifo_q(576+ADDRESS_WIDTH-1 downto 576);
+config7_200                     <= configfifo_q(575 downto 512);
+config6_200                     <= configfifo_q(511 downto 448);
 config5_200                     <= configfifo_q(447 downto 384);
 config4_200                     <= configfifo_q(383 downto 320);
 config3_200                     <= configfifo_q(319 downto 256);
@@ -748,7 +764,7 @@ read_offset_200                 <= configfifo_q(63 downto 32);
 write_offset_200                <= configfifo_q(31 downto 0);
 configfifo: async_fifo
 generic map (
-    FIFO_WIDTH => 448+2*ADDRESS_WIDTH,
+    FIFO_WIDTH => 576+2*ADDRESS_WIDTH,
     FIFO_DEPTH_BITS => REQUEST_FIFO_DEPTH_BITS,
     ACK => 0)
 port map(

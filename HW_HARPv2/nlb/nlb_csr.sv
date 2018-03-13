@@ -67,6 +67,8 @@ module nlb_csr #(parameter CCIP_VERSION_NUMBER=0)
     cr2re_my_config3,
     cr2re_my_config4,
     cr2re_my_config5,
+    cr2re_my_config6,
+    cr2re_my_config7,
 // My CSRs end
     re2cr_num_reads,
     re2cr_num_writes,
@@ -106,6 +108,8 @@ output logic                 cr2cp_MmioDout_v;        //   CSR read data valid
 (* `KEEP_WIRE *) output wire  [63:0]  cr2re_my_config3;
 (* `KEEP_WIRE *) output wire  [63:0]  cr2re_my_config4;
 (* `KEEP_WIRE *) output wire  [63:0]  cr2re_my_config5;
+(* `KEEP_WIRE *) output wire  [63:0]  cr2re_my_config6;
+(* `KEEP_WIRE *) output wire  [63:0]  cr2re_my_config7;
 // My CSRs end
 
 (* `KEEP_WIRE *) input wire [31:0]    re2cr_num_reads;
@@ -159,6 +163,8 @@ localparam      CSR_MY_CONFIG2       = 16'h220;
 localparam      CSR_MY_CONFIG3       = 16'h228;
 localparam      CSR_MY_CONFIG4       = 16'h230;
 localparam      CSR_MY_CONFIG5       = 16'h238;
+localparam      CSR_MY_CONFIG6       = 16'h240;
+localparam      CSR_MY_CONFIG7       = 16'h248;
 // My CSRs end
 
 
@@ -251,6 +257,8 @@ assign     cr2re_my_config2         = csr_reg[CSR_MY_CONFIG2>>3];
 assign     cr2re_my_config3         = csr_reg[CSR_MY_CONFIG3>>3];
 assign     cr2re_my_config4         = csr_reg[CSR_MY_CONFIG4>>3];
 assign     cr2re_my_config5         = csr_reg[CSR_MY_CONFIG5>>3];
+assign     cr2re_my_config6         = csr_reg[CSR_MY_CONFIG6>>3];
+assign     cr2re_my_config7         = csr_reg[CSR_MY_CONFIG7>>3];
 // My CSRs end
 
 function automatic [31:0] func_csr_connect_4B;
@@ -551,6 +559,18 @@ begin
                   64'h0
                  );
          set_attr(CSR_MY_CONFIG5,
+                  NO_STAGED_CSR,
+                  re2cr_wrlock_n,
+                  {64{RW}},
+                  64'h0
+                 );
+         set_attr(CSR_MY_CONFIG6,
+                  NO_STAGED_CSR,
+                  re2cr_wrlock_n,
+                  {64{RW}},
+                  64'h0
+                 );
+         set_attr(CSR_MY_CONFIG7,
                   NO_STAGED_CSR,
                   re2cr_wrlock_n,
                   {64{RW}},

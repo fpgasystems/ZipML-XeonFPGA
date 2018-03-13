@@ -310,6 +310,8 @@ module nlb_lpbk #(parameter TXHDR_WIDTH=61, RXHDR_WIDTH=18, DATA_WIDTH =512)
    wire [63:0]                  re2xy_my_config3;
    wire [63:0]                  re2xy_my_config4;
    wire [63:0]                  re2xy_my_config5;
+   wire [63:0]                  re2xy_my_config6;
+   wire [63:0]                  re2xy_my_config7;
 // My CSRs end
 
    wire                         ab2re_TestCmp;
@@ -337,6 +339,8 @@ module nlb_lpbk #(parameter TXHDR_WIDTH=61, RXHDR_WIDTH=18, DATA_WIDTH =512)
    wire  [63:0]                 cr2re_my_config3;
    wire  [63:0]                 cr2re_my_config4;
    wire  [63:0]                 cr2re_my_config5;
+   wire  [63:0]                 cr2re_my_config6;
+   wire  [63:0]                 cr2re_my_config7;
 // My CSRs end 
    logic                        ab2re_RdSop;
    logic [1:0]                  ab2re_WrLen;
@@ -396,6 +400,8 @@ inst_requestor(
        cr2re_my_config3,
        cr2re_my_config4,
        cr2re_my_config5,
+       cr2re_my_config6,
+       cr2re_my_config7,
 // My CSRs end
        ab2re_WrAddr,                   // [ADDR_LMT-1:0]        arbiter:        Writes are guaranteed to be accepted
        ab2re_WrTID,                    // [15:0]                arbiter:        meta data
@@ -435,6 +441,8 @@ inst_requestor(
        re2xy_my_config3,
        re2xy_my_config4,
        re2xy_my_config5,
+       re2xy_my_config6,
+       re2xy_my_config7,
 // My CSRs end       
 
        ab2re_TestCmp,                  //                       arbiter:        Test completion flag
@@ -513,7 +521,9 @@ selector_cross (
   .config2(re2xy_my_config2),
   .config3(re2xy_my_config3),
   .config4(re2xy_my_config4),
-  .config5(re2xy_my_config5)
+  .config5(re2xy_my_config5),
+  .config6(re2xy_my_config6),
+  .config7(re2xy_my_config7)
 );
 
 t_ccip_c0_ReqMmioHdr        cp2cr_MmioHdr;
@@ -574,6 +584,8 @@ inst_nlb_csr (
     cr2re_my_config3,
     cr2re_my_config4,
     cr2re_my_config5,
+    cr2re_my_config6,
+    cr2re_my_config7,
 // My CSRs end
     re2cr_num_reads,
     re2cr_num_writes,

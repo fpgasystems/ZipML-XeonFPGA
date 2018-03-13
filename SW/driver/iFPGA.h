@@ -84,6 +84,8 @@
 	#define CSR_MY_CONFIG3				0x0228
 	#define CSR_MY_CONFIG4				0x0230
 	#define CSR_MY_CONFIG5				0x0238
+	#define CSR_MY_CONFIG6				0x0240
+	#define CSR_MY_CONFIG7				0x0248
 #endif
 
 static double get_time()

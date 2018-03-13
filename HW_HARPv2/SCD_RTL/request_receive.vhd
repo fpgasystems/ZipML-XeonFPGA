@@ -48,6 +48,9 @@ port (
 	out_index : out std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 
+	enable_decryption : in std_logic;
+	program_key_index : std_logic_vector(3 downto 0);
+	program_key : std_logic_vector(127 downto 0);
 	enable_multiline : in std_logic;
 	external_free_count : in std_logic_vector(8 downto 0);
 	enable_staleness : in std_logic;
@@ -116,6 +119,15 @@ signal reordered_buffer_free_count : std_logic_vector(31 downto 0);
 signal reordered_response_data : std_logic_vector(511 downto 0);
 signal reordered_resonse : std_logic;
 
+signal out_a_valid_internal : std_logic;
+signal out_data_internal : std_logic_vector(511 downto 0);
+
+signal AESDEC_CBC_length : unsigned(15 downto 0);
+signal AESDEC_CBC_in_valid : std_logic;
+signal AESDEC_CBC_in_data : std_logic_vector(511 downto 0);
+signal AESDEC_CBC_out_valid : std_logic;
+signal AESDEC_CBC_out_data : std_logic_vector(511 downto 0);
+
 component reorder
 generic(
 	LOG2_BUFFER_DEPTH : integer := 8;
@@ -131,6 +143,22 @@ port (
 	buffer_free_count : out std_logic_vector(31 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 	out_valid : out std_logic);
+end component;
+
+component AESDEC_CBC
+port (
+	clk : in std_logic;
+	resetn : in std_logic;
+
+	in_valid : in std_logic;
+	in_data : in std_logic_vector(511 downto 0);
+	in_length : in std_logic_vector(15 downto 0);
+
+	program_key_index : in std_logic_vector(3 downto 0);
+	program_key : in std_logic_vector(127 downto 0);
+
+	out_valid : out std_logic;
+	out_data : out std_logic_vector(511 downto 0));
 end component;
 
 component simple_dual_port_ram_single_clock
@@ -167,6 +195,26 @@ port map (
 	out_data => reordered_response_data,
 	out_valid => reordered_resonse);
 
+AESDEC_CBC_in_valid <= out_a_valid_internal when enable_decryption = '1' else '0';
+AESDEC_CBC_in_data <= out_data_internal;
+AESDEC_CBC_length <= iREAD_SIZE-1 when (read_size_from_memory = '1' and iREAD_SIZE > 0) else iREAD_SIZE;
+AESDEC_CBC_inst: AESDEC_CBC
+port map (
+	clk => clk,
+	resetn => resetn,
+
+	in_valid => AESDEC_CBC_in_valid,
+	in_data => AESDEC_CBC_in_data,
+	in_length => std_logic_vector(AESDEC_CBC_length),
+
+	program_key_index => program_key_index,
+	program_key => program_key,
+
+	out_valid => AESDEC_CBC_out_valid,
+	out_data => AESDEC_CBC_out_data);
+out_a_valid <= AESDEC_CBC_out_valid when enable_decryption = '1' else out_a_valid_internal;
+out_data <= AESDEC_CBC_out_data when (AESDEC_CBC_out_valid = '1' and enable_decryption = '1') else out_data_internal;
+
 column_offset_raddr <= std_logic_vector( feature_index(LOG2_MAX_NUMFEATURES-1 downto 4) );
 column_offset_store: simple_dual_port_ram_single_clock
 generic map (
@@ -193,7 +241,6 @@ port map (
 	we => column_previous_readsize_we,
 	q => column_previous_readsize_dout);
 
-
 feature_index_in_line <= to_integer(feature_index(3 downto 0));
 process(clk)
 begin
@@ -209,7 +256,7 @@ if clk'event and clk = '1' then
 		iNUMBER_OF_OFFSET_LINES <= iNUMBER_OF_FEATURES(LOG2_MAX_NUMFEATURES downto 4);
 	end if;
 
-	out_data <= reordered_response_data;
+	out_data_internal <= reordered_response_data;
 
 	NumberOfPendingReads <= NumberOfRequestedReads - NumberOfReceivedReads;
 
@@ -224,7 +271,7 @@ if clk'event and clk = '1' then
 
 		out_residual_valid <= '0';
 		out_b_valid <= '0';
-		out_a_valid <= '0';
+		out_a_valid_internal <= '0';
 
 		read_state <= B"00";
 		receive_state <= B"00";
@@ -402,7 +449,7 @@ if clk'event and clk = '1' then
 		column_offset_we <= '0';
 		out_residual_valid <= '0';
 		out_b_valid <= '0';
-		out_a_valid <= '0';
+		out_a_valid_internal <= '0';
 		if reordered_resonse = '1' then
 			NumberOfReceivedReads <= NumberOfReceivedReads + 1;
 			out_index <= std_logic_vector(i_receive_index);
@@ -444,11 +491,11 @@ if clk'event and clk = '1' then
 						iREAD_SIZE <= unsigned(reordered_response_data(15 downto 0));
 						iRECEIVE_SIZE <= unsigned(reordered_response_data(15 downto 0));
 					else
-						out_a_valid <= '1';
+						out_a_valid_internal <= '1';
 					end if;
 				else
 					iRECEIVE_SIZE <= iBATCH_SIZE;
-					out_a_valid <= '1';
+					out_a_valid_internal <= '1';
 				end if;
 
 				if i_receive_index = iRECEIVE_SIZE-1 then

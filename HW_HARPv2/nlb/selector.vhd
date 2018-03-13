@@ -57,7 +57,9 @@ port(
 	config2 : in std_logic_vector(63 downto 0);
 	config3 : in std_logic_vector(63 downto 0);
 	config4 : in std_logic_vector(63 downto 0);
-	config5 : in std_logic_vector(63 downto 0));
+	config5 : in std_logic_vector(63 downto 0);
+	config6 : in std_logic_vector(63 downto 0);
+	config7 : in std_logic_vector(63 downto 0));
 end selector;
 
 architecture behavioral of selector is
@@ -204,8 +206,11 @@ end component;
 
 signal enable_multiline : std_logic := '0';
 signal enable_decompression : std_logic := '0';
-signal to_integer_scaler : std_logic_vector(15 downto 0) := (others => '0');
 signal enable_staleness : std_logic := '0';
+signal enable_decryption : std_logic := '0';
+signal program_key_index : std_logic_vector(3 downto 0);
+signal program_key : std_logic_vector(127 downto 0);
+signal to_integer_scaler : std_logic_vector(15 downto 0) := (others => '0');
 signal a_address : std_logic_vector(ADDRESS_WIDTH-1 downto 0) := (others => '0');
 signal b_address : std_logic_vector(ADDRESS_WIDTH-1 downto 0) := (others => '0');
 signal step_address : std_logic_vector(ADDRESS_WIDTH-1 downto 0) := (others => '0');
@@ -244,8 +249,11 @@ port(
 
 	enable_multiline : in std_logic;
 	enable_decompression : in std_logic;
-	to_integer_scaler : in std_logic_vector(15 downto 0);
 	enable_staleness : in std_logic;
+	enable_decryption : in std_logic;
+	program_key_index : std_logic_vector(3 downto 0);
+	program_key : std_logic_vector(127 downto 0);
+	to_integer_scaler : in std_logic_vector(15 downto 0);
 	a_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	b_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	step_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
@@ -340,8 +348,11 @@ port map (
 
 	enable_multiline => enable_multiline,
 	enable_decompression => enable_decompression,
-	to_integer_scaler => to_integer_scaler,
 	enable_staleness => enable_staleness,
+	enable_decryption => enable_decryption,
+	program_key_index => program_key_index,
+	program_key => program_key,
+	to_integer_scaler => to_integer_scaler,
 	a_address => a_address,
 	b_address => b_address,
 	step_address => step_address,
@@ -360,8 +371,11 @@ if clk_200'event and clk_200 = '1' then
 
 		enable_multiline <= config5(18);
 		enable_decompression <= config5(1);
-		to_integer_scaler <= config5(17 downto 2);
 		enable_staleness <= config5(0);
+		enable_decryption <= config5(19);
+		program_key_index <= config5(23 downto 20);
+		program_key <= config7 & config6;
+		to_integer_scaler <= config5(17 downto 2);
 		a_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');
 		a_address(31 downto 0) <= config1(31 downto 0);
 		b_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');

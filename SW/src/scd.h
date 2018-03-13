@@ -185,9 +185,9 @@ public:
 #endif
 
 	uint32_t print_FPGA_memory();
-	uint32_t copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs);
-	uint32_t copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs);
-	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse);
+	uint32_t copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs, char useEncrypted);
+	uint32_t copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs, char useEncrypted);
+	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse);
 	
 	uint32_t decompress_column(uint32_t* compressedColumn, uint32_t inNumWords, float* decompressedColumn, uint32_t toIntegerScaler);
 	uint32_t compress_column(float* originalColumn, uint32_t inNumWords, uint32_t* compressedColumn, uint32_t toIntegerScaler);
@@ -425,7 +425,6 @@ float scd::compress_a(uint32_t minibatchSize, uint32_t toIntegerScaler) {
 
 	uint32_t numWordsAfterCompression = 0;
 	for (uint32_t j = 0; j < numFeatures; j++) {
-		
 		numWordsAfterCompression += compressed_a_sizes[j][numMinibatches-1];
 	}
 
@@ -1017,7 +1016,7 @@ uint32_t scd::print_FPGA_memory() {
 	exit(0);
 }
 
-uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs) {
+uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs, char useEncrypted) {
 	uint32_t address32 = NUM_FINSTANCES*pages_to_allocate*numValuesPerLine;
 	uint32_t numMinibatchesAssigned = 0;
 	
@@ -1055,7 +1054,10 @@ uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minib
 			interfaceFPGA->writeToMemory32('i', address32/numValuesPerLine, a_address[n]*numValuesPerLine + j);
 
 			for (uint32_t i = 0; i < numMinibatchesToAssign[n]*minibatchSize; i++) {
-				interfaceFPGA->writeToMemoryFloat('i', a[j][numMinibatchesAssigned*minibatchSize + i], address32++);
+				if (useEncrypted == 1)
+					interfaceFPGA->writeToMemory32('i', encrypted_a[j][numMinibatchesAssigned*minibatchSize + i], address32++);
+				else
+					interfaceFPGA->writeToMemoryFloat('i', a[j][numMinibatchesAssigned*minibatchSize + i], address32++);
 			}
 			if (address32%numValuesPerLine > 0) {
 				uint32_t padding = (numValuesPerLine - address32%numValuesPerLine);
@@ -1085,7 +1087,7 @@ uint32_t scd::copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minib
 	return step_address[0]*numValuesPerLine;
 }
 
-uint32_t scd::copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs) {
+uint32_t scd::copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs, char useEncrypted) {
 	uint32_t address32 = NUM_FINSTANCES*pages_to_allocate*numValuesPerLine;
 	uint32_t numMinibatchesAssigned = 0;
 
@@ -1143,7 +1145,10 @@ uint32_t scd::copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uin
 				// cout << address32 << endl;
 
 				for (uint32_t i = 0; i < numWordsInBatch; i++) {
-					interfaceFPGA->writeToMemory32('i', compressed_a[j][compressed_a_offset + i], address32++);
+					if (useEncrypted == 1)
+						interfaceFPGA->writeToMemory32('i', encrypted_a[j][compressed_a_offset + i], address32++);
+					else
+						interfaceFPGA->writeToMemory32('i', compressed_a[j][compressed_a_offset + i], address32++);
 				}
 				if (address32%numValuesPerLine > 0) {
 					uint32_t padding = (numValuesPerLine - address32%numValuesPerLine);
@@ -1174,7 +1179,7 @@ uint32_t scd::copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uin
 	return step_address[0]*numValuesPerLine;
 }
 
-void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse) {
+void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse) {
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
@@ -1199,9 +1204,9 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 
 	uint32_t address32 = 0;
 	if (useCompressed == 0)
-		address32 = copy_data_into_FPGA_memory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs);
+		address32 = copy_data_into_FPGA_memory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs, useEncrypted);
 	else
-		address32 = copy_compressed_data_into_FPGA_memory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs);
+		address32 = copy_compressed_data_into_FPGA_memory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs, useEncrypted);
 
 	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
 	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
@@ -1232,8 +1237,22 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 		temp_reg = 0;
 		temp_reg = ((uint64_t)numEpochs << 32) | ((uint64_t)*tempStepSizeAddr);
 		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp_reg);
-		temp_reg = ((uint64_t)enableMultiline << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;
+		temp_reg = ((uint64_t)useEncrypted << 19) | ((uint64_t)enableMultiline << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;
 		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp_reg);
+
+		if (useEncrypted == 1) {
+			for (uint32_t i = 0; i < 15; i++) {
+				uint32_t temp_reg2 = ((uint64_t)i << 20) | temp_reg;
+				interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp_reg2);
+				interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG6, ((uint64_t*)KEYS_dec)[2*i]);
+				interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG7, ((uint64_t*)KEYS_dec)[2*i+1]);
+			}
+			uint32_t temp_reg2 = ((uint64_t)15 << 20) | temp_reg;
+			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp_reg2);
+			uint64_t* temp_ptr = (uint64_t*)ivec;
+			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG6, temp_ptr[0]);
+			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG7, temp_ptr[1]);
+		}
 	}
 
 	double start = get_time();

@@ -48,8 +48,11 @@ port(
 
 	enable_multiline : in std_logic;
 	enable_decompression : in std_logic;
-	to_integer_scaler : in std_logic_vector(15 downto 0);
 	enable_staleness : in std_logic;
+	enable_decryption : in std_logic;
+	program_key_index : std_logic_vector(3 downto 0);
+	program_key : std_logic_vector(127 downto 0);
+	to_integer_scaler : in std_logic_vector(15 downto 0);
 	a_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	b_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
 	step_address : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
@@ -244,6 +247,9 @@ port (
 	out_index : out std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 
+	enable_decryption : in std_logic;
+	program_key_index : std_logic_vector(3 downto 0);
+	program_key : std_logic_vector(127 downto 0);
 	enable_multiline : in std_logic;
 	external_free_count : in std_logic_vector(8 downto 0);
 	enable_staleness : in std_logic;
@@ -361,6 +367,9 @@ port map (
 	out_index => response_index,
 	out_data => response_data,
 
+	enable_decryption => enable_decryption,
+	program_key_index => program_key_index,
+	program_key => program_key,
 	enable_multiline => enable_multiline,
 	external_free_count => decompressor_out_fifo_free_count,
 	enable_staleness => enable_staleness,

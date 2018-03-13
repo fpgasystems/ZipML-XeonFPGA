@@ -69,6 +69,8 @@ module requestor #(parameter PEND_THRESH=1, ADDR_LMT=20, TXHDR_WIDTH=61, RXHDR_W
     cr2re_my_config3,
     cr2re_my_config4,
     cr2re_my_config5,
+    cr2re_my_config6,
+    cr2re_my_config7,
 // My CSRs end
     ab2re_WrAddr,            // [ADDR_LMT-1:0]      arbiter:        Writes are guaranteed to be accepted
     ab2re_WrTID,             // [15:0]              arbiter:        meta data
@@ -108,6 +110,8 @@ module requestor #(parameter PEND_THRESH=1, ADDR_LMT=20, TXHDR_WIDTH=61, RXHDR_W
     re2xy_my_config3,
     re2xy_my_config4,
     re2xy_my_config5,
+    re2xy_my_config6,
+    re2xy_my_config7,
 // My CSRs end
 
     ab2re_TestCmp,           //                     arbiter:        Test completion flag
@@ -158,6 +162,8 @@ module requestor #(parameter PEND_THRESH=1, ADDR_LMT=20, TXHDR_WIDTH=61, RXHDR_W
     input logic [63:0]      cr2re_my_config3;
     input logic [63:0]      cr2re_my_config4;
     input logic [63:0]      cr2re_my_config5;
+    input logic [63:0]      cr2re_my_config6;
+    input logic [63:0]      cr2re_my_config7;
 // My CSRs end
     
     input  logic [ADDR_LMT-1:0]   ab2re_WrAddr;           // [ADDR_LMT-1:0]        arbiter:       Writes are guaranteed to be accepted
@@ -199,6 +205,8 @@ module requestor #(parameter PEND_THRESH=1, ADDR_LMT=20, TXHDR_WIDTH=61, RXHDR_W
     output logic [63:0]     re2xy_my_config3;
     output logic [63:0]     re2xy_my_config4;
     output logic [63:0]     re2xy_my_config5;
+    output logic [63:0]     re2xy_my_config6;
+    output logic [63:0]     re2xy_my_config7;
 // My CSRs end
     input  logic            ab2re_TestCmp;          //                       arbiter:       Test completion flag
     input  logic [255:0]    ab2re_ErrorInfo;        // [255:0]               arbiter:       error information
@@ -306,6 +314,8 @@ module requestor #(parameter PEND_THRESH=1, ADDR_LMT=20, TXHDR_WIDTH=61, RXHDR_W
     reg   [63:0]            cr_my_config3;
     reg   [63:0]            cr_my_config4;
     reg   [63:0]            cr_my_config5;
+    reg   [63:0]            cr_my_config6;
+    reg   [63:0]            cr_my_config7;
 // My CSRs end
 (* maxfan=512 *) wire       txFifo_Full;
     wire                    txFifo_AlmFull;
@@ -402,6 +412,8 @@ module requestor #(parameter PEND_THRESH=1, ADDR_LMT=20, TXHDR_WIDTH=61, RXHDR_W
       re2xy_my_config3          <= cr2re_my_config3;
       re2xy_my_config4          <= cr2re_my_config4;
       re2xy_my_config5          <= cr2re_my_config5;
+      re2xy_my_config6          <= cr2re_my_config6;
+      re2xy_my_config7          <= cr2re_my_config7;
 // My CSRs end
     end
 
@@ -441,6 +453,8 @@ module requestor #(parameter PEND_THRESH=1, ADDR_LMT=20, TXHDR_WIDTH=61, RXHDR_W
         cr_my_config3         = cr2re_my_config3;
         cr_my_config4         = cr2re_my_config4;
         cr_my_config5         = cr2re_my_config5;
+        cr_my_config6         = cr2re_my_config6;
+        cr_my_config7         = cr2re_my_config7;
 // My CSRs end        
         cr_wrthru_en          = cr2re_cfg[0];
         cr_cont               = cr2re_cfg[1];
