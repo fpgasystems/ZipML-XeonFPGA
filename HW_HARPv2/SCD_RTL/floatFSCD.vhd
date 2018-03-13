@@ -46,6 +46,7 @@ port(
 	start : in std_logic;
 	done : out std_logic;
 
+	enable_multiline : in std_logic;
 	enable_decompression : in std_logic;
 	to_integer_scaler : in std_logic_vector(15 downto 0);
 	enable_staleness : in std_logic;
@@ -243,6 +244,7 @@ port (
 	out_index : out std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 
+	enable_multiline : in std_logic;
 	external_free_count : in std_logic_vector(8 downto 0);
 	enable_staleness : in std_logic;
 	read_size_from_memory : in std_logic;
@@ -359,6 +361,7 @@ port map (
 	out_index => response_index,
 	out_data => response_data,
 
+	enable_multiline => enable_multiline,
 	external_free_count => decompressor_out_fifo_free_count,
 	enable_staleness => enable_staleness,
 	read_size_from_memory => enable_decompression,
@@ -558,13 +561,11 @@ if clk'event and clk = '1' then
 		step_writeback <= (others => '0');
 		step_writeback_index <= 0;
 	else
-		 timeout <= timeout + 1;
-
+		
 		-- Receive lines
 		residual_store_we <= '0';
 		residual_store_loading_we <= '0';
 		if response_residual_valid = '1' then
-			timeout <= (others => '0');
 			residual_store_we <= '1';
 			residual_store_loading_we <= '1';
 			residual_store_din <= response_data;
@@ -634,7 +635,9 @@ if clk'event and clk = '1' then
 				if feature_update_index = iNUMBER_OF_FEATURES-1 then
 					feature_update_index <= (others => '0');
 					write_residual_back <= '1';
-					step_writeback_valid <= '1';
+					if unsigned(iNUMBER_OF_FEATURES(3 downto 0)) > 0 then
+						step_writeback_valid <= '1';
+					end if;
 				else
 					feature_update_index <= feature_update_index + 1;
 				end if;
@@ -715,12 +718,19 @@ if clk'event and clk = '1' then
 
 		end if;
 
+
+		if response_residual_valid = '1' and response_a_valid = '1' then
+			timeout <= (others => '0');
+		else
+			timeout <= timeout + 1;
+		end if;
 		if timeout > X"BEBC200" and timeout_occured = '0' then
 		--if timeout > X"4000" and timeout_occured = '0' then -- Use during simulation
+			NumberOfWriteResponses <= (others => '0');
 			timeout_occured <= '1';
 			write_request <= '1';
 			write_request_address <= (others => '0');
-			write_request_data(392 downto 0) <= 	std_logic_vector(decompressor_out_fifo_free_count) &
+			write_request_data(415 downto 0) <= 	B"000" & X"00000" & std_logic_vector(decompressor_out_fifo_free_count) &
 													X"0000" & std_logic_vector(write_batch_index) &
 													std_logic_vector(feature_update_index) &
 													std_logic_vector(reorder_free_count) &

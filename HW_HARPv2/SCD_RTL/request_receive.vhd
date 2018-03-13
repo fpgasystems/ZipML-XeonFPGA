@@ -48,6 +48,7 @@ port (
 	out_index : out std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 
+	enable_multiline : in std_logic;
 	external_free_count : in std_logic_vector(8 downto 0);
 	enable_staleness : in std_logic;
 	read_size_from_memory : in std_logic;
@@ -254,8 +255,8 @@ if clk'event and clk = '1' then
 		reorder_start_address_adjust <= '0';
 		column_previous_readsize_we <= '0';
 		if start = '1' and read_request_almostfull = '0' and batch_index <= iNUMBER_OF_BATCHES and new_column_read_allowed = '1'
-			and NumberOfPendingReads < unsigned(reordered_buffer_free_count)
-			and NumberOfPendingReads < unsigned(external_free_count)
+			and NumberOfPendingReads < unsigned(reordered_buffer_free_count)-20
+			and NumberOfPendingReads < unsigned(external_free_count)-20
 		then
 			read_request <= '1';
 			read_request_tid <= B"00" & std_logic_vector(NumberOfRequestedReads(13 downto 0));
@@ -291,7 +292,7 @@ if clk'event and clk = '1' then
 					read_state <= B"10";
 				else
 
-					if (i_index+4) < iBATCH_SIZE-1
+					if (i_index+4) < iBATCH_SIZE-1 and enable_multiline = '1'
 						and i_index(1 downto 0) = B"00"
 						and residual_address(1 downto 0) = B"00"
 						and iBATCH_OFFSET(1 downto 0) = B"00" then
@@ -299,7 +300,7 @@ if clk'event and clk = '1' then
 						i_index <= i_index + 4;
 						NumberOfRequestedReads <= NumberOfRequestedReads + 4;
 						residual_NumberOfRequestedReads <= residual_NumberOfRequestedReads + 4;
-					elsif (i_index+2) < iBATCH_SIZE-1
+					elsif (i_index+2) < iBATCH_SIZE-1 and enable_multiline = '1'
 						and i_index(0) = '0'
 						and residual_address(0) = '0'
 						and iBATCH_OFFSET(0) = '0' then
@@ -322,7 +323,7 @@ if clk'event and clk = '1' then
 					read_state <= B"11";
 				else
 
-					if (i_index+4) < iBATCH_SIZE-1
+					if (i_index+4) < iBATCH_SIZE-1 and enable_multiline = '1'
 						and i_index(1 downto 0) = B"00"
 						and b_address(1 downto 0) = B"00"
 						and iBATCH_OFFSET(1 downto 0) = B"00" then
@@ -330,7 +331,7 @@ if clk'event and clk = '1' then
 						i_index <= i_index + 4;
 						NumberOfRequestedReads <= NumberOfRequestedReads + 4;
 						b_NumberOfRequestedReads <= b_NumberOfRequestedReads + 4;
-					elsif (i_index+2) < iBATCH_SIZE-1
+					elsif (i_index+2) < iBATCH_SIZE-1 and enable_multiline = '1'
 						and i_index(0) = '0'
 						and b_address(0) = '0'
 						and iBATCH_OFFSET(0) = '0' then
@@ -374,14 +375,14 @@ if clk'event and clk = '1' then
 					column_previous_readsize_waddr <= std_logic_vector( feature_index(LOG2_MAX_NUMFEATURES-1 downto 4) );
 				else
 					
-					if (i_index+4) < iREAD_SIZE-1
+					if signed(i_index+4) < signed(iREAD_SIZE-1) and enable_multiline = '1'
 						and i_index(1 downto 0) = B"00"
 						and column_offset_intermediate(1 downto 0) = B"00" then
 						read_request_length <= B"11";
 						i_index <= i_index + 4;
 						NumberOfRequestedReads <= NumberOfRequestedReads + 4;
 						a_NumberOfRequestedReads <= a_NumberOfRequestedReads + 4;
-					elsif (i_index+2) < iREAD_SIZE-1
+					elsif signed(i_index+2) < signed(iREAD_SIZE-1) and enable_multiline = '1'
 						and i_index(0) = '0'
 						and column_offset_intermediate(0) = '0' then
 						read_request_length <= B"01";
@@ -392,6 +393,7 @@ if clk'event and clk = '1' then
 						read_request_length <= B"00";
 						i_index <= i_index + 1;
 					end if;
+
 				end if;
 			end if;
 		end if;

@@ -731,17 +731,17 @@ char iFPGA::allocateWorkspace(char IOmem_separate) {
 		}
 		printf("Page tables verified!\n");
 
-		m_pALIMMIOService->mmioWrite32(CSR_ADDR_RESET, 0xFFFFFFFF);
 		// Assert AFU reset
 		m_pALIMMIOService->mmioWrite32(CSR_CTL, 0);
-		//	De-Assert AFU reset
-		m_pALIMMIOService->mmioWrite32(CSR_CTL, 1);
 		// Verified page tables
+		m_pALIMMIOService->mmioWrite32(CSR_ADDR_RESET, 0xFFFFFFFF);
+		// De-Assert AFU reset
+		m_pALIMMIOService->mmioWrite32(CSR_CTL, 1);
 
 		printf("Resetted!\n"); fflush(stdout);
 
 		// Set the test mode
-		m_pALIMMIOService->mmioWrite32(CSR_CFG, 1 << 12 /*QPI or PCIe*/ | 0 /*write through enable*/ );
+		m_pALIMMIOService->mmioWrite32(CSR_CFG, 0 << 12 /*QPI or PCIe*/ | 0 /*write through enable*/ );
 
 		printf("CSR_CFG is written!\n"); fflush(stdout);
 	}

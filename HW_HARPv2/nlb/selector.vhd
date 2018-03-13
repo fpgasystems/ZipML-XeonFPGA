@@ -65,6 +65,10 @@ architecture behavioral of selector is
 signal parti_start : std_logic;
 signal parti_done : std_logic;
 
+signal NumberOfWriteRequests : unsigned(31 downto 0) := (others => '0');
+signal NumberOfPendingWrites : unsigned(31 downto 0) := (others => '0');
+signal NumberOfWriteResponses : unsigned(31 downto 0) := (others => '0');
+
 constant PAGE_SIZE_IN_BITS : integer := 16;
 --constant PAGE_SIZE_IN_BITS : integer := 7;
 constant PAGE_SIZE : integer := 2**PAGE_SIZE_IN_BITS;
@@ -198,6 +202,7 @@ port(
 	q : 	out std_logic_vector(DATA_WIDTH-1 downto 0));
 end component;
 
+signal enable_multiline : std_logic := '0';
 signal enable_decompression : std_logic := '0';
 signal to_integer_scaler : std_logic_vector(15 downto 0) := (others => '0');
 signal enable_staleness : std_logic := '0';
@@ -237,6 +242,7 @@ port(
 	start : in std_logic;
 	done : out std_logic;
 
+	enable_multiline : in std_logic;
 	enable_decompression : in std_logic;
 	to_integer_scaler : in std_logic_vector(15 downto 0);
 	enable_staleness : in std_logic;
@@ -332,6 +338,7 @@ port map (
 	start => parti_start,
 	done => parti_done,
 
+	enable_multiline => enable_multiline,
 	enable_decompression => enable_decompression,
 	to_integer_scaler => to_integer_scaler,
 	enable_staleness => enable_staleness,
@@ -351,6 +358,7 @@ if clk_200'event and clk_200 = '1' then
 		read_offset_internal <= read_offset;
 		write_offset_internal <= write_offset;
 
+		enable_multiline <= config5(18);
 		enable_decompression <= config5(1);
 		to_integer_scaler <= config5(17 downto 2);
 		enable_staleness <= config5(0);
@@ -414,6 +422,8 @@ variable offsetted_read_request_address : unsigned(ADDRESS_WIDTH-1 downto 0) := 
 variable offsetted_write_request_address : unsigned(ADDRESS_WIDTH-1 downto 0) := (others => '0');
 begin
 if clk_200'event and clk_200 = '1' then
+	NumberOfPendingWrites <= NumberOfWriteRequests - NumberOfWriteResponses;
+
 	src_addr_internal <= src_addr;
 	dst_addr_internal <= dst_addr;
 
@@ -425,6 +435,9 @@ if clk_200'event and clk_200 = '1' then
 	read_response_cacheline_number_1d <= read_response_cacheline_number;
 
 	if resetn = '0' then
+		NumberOfWriteRequests <= (others => '0');
+		NumberOfWriteResponses <= (others => '0');
+
 		read_request <= '0';
 		write_request <= '0';
 
@@ -524,7 +537,7 @@ if clk_200'event and clk_200 = '1' then
 			src_bram_raddr <= std_logic_vector(offsetted_read_request_address(10 + PAGE_SIZE_IN_BITS downto PAGE_SIZE_IN_BITS));
 			current_read_request_address <= wrapper_read_request_length & wrapper_read_request_tid & std_logic_vector(offsetted_read_request_address);
 		end if;
-		if src_bram_verify = '1' and start = '1' then
+		if src_bram_verify = '1' and start = '1' and NumberOfPendingWrites < 220 then
 			src_bram_re <= '1';
 			src_bram_raddr <= std_logic_vector(src_bram_verify_index);
 			if src_bram_verify_index = src_bram_waddr_count-1 then
@@ -538,6 +551,7 @@ if clk_200'event and clk_200 = '1' then
 		ififo_we <= '0';
 		if src_bram_re_1d = '1' then
 			if src_bram_verify_2d = '1' then
+				NumberOfWriteRequests <= NumberOfWriteRequests + 1;
 				write_request <= '1';
 				write_request_address <= std_logic_vector( unsigned(src_bram_raddr_1d) + unsigned(verify_base) );
 				write_request_data(ADDRESS_WIDTH-1 downto 0) <= src_bram_dout;
@@ -615,7 +629,7 @@ if clk_200'event and clk_200 = '1' then
 			current_write_request_address <= std_logic_vector(offsetted_write_request_address);
             current_write_request_data <= ofifo_dout(511 downto 0);
 		end if;
-		if dst_bram_verify = '1' and src_bram_verify = '0' and start = '1' then
+		if dst_bram_verify = '1' and src_bram_verify = '0' and start = '1' and NumberOfPendingWrites < 220 then
 			dst_bram_re <= '1';
 			dst_bram_raddr <= std_logic_vector(dst_bram_verify_index);
 			if dst_bram_verify_index = dst_bram_waddr_count-1 then
@@ -628,6 +642,7 @@ if clk_200'event and clk_200 = '1' then
 		
 		if dst_bram_re_1d = '1' then
 			write_request <= '1';
+			NumberOfWriteRequests <= NumberOfWriteRequests + 1;
 			if dst_bram_verify_2d = '1' then
 				write_request_address <= std_logic_vector( unsigned(dst_bram_raddr_1d) + src_bram_waddr_count + unsigned(verify_base) );
 				write_request_data(ADDRESS_WIDTH-1 downto 0) <= dst_bram_dout;
@@ -639,6 +654,7 @@ if clk_200'event and clk_200 = '1' then
 
 		wrapper_write_response <= '0';
 		if write_response = '1' then
+			NumberOfWriteResponses <= NumberOfWriteResponses + 1;
 			wrapper_write_response <= '1';
 		end if;
 

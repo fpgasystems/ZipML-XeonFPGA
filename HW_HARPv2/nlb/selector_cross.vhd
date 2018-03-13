@@ -63,7 +63,8 @@ end selector_cross;
 
 architecture behavioral of selector_cross is
 
-constant FIFO_DEPTH_BITS : integer := 8;
+constant REQUEST_FIFO_DEPTH_BITS : integer := 8;
+constant RESPONSE_FIFO_DEPTH_BITS : integer := REQUEST_FIFO_DEPTH_BITS;
 
 signal resetn_200 : std_logic;
 signal start_200 : std_logic;
@@ -102,16 +103,15 @@ signal read_response_config_200 : std_logic_vector(NUM_SELECTORS-1 downto 0);
 signal read_response_transactionID_200 : transactionID_200_type;
 signal read_response_cacheline_number_200 : read_length_200_type;
 
-signal current_read_response_fifo : integer range 0 to NUM_SELECTORS-1;
-
+type read_response_fifo_type is array (NUM_SELECTORS-1 downto 0) of std_logic_vector(529 downto 0);
 signal read_response_fifo_data : std_logic_vector(529 downto 0);
-signal read_response_fifo_wrreq : std_logic;
-signal read_response_fifo_rdreq : std_logic;
-signal read_response_fifo_rdreq_1d : std_logic;
-signal read_response_fifo_q : std_logic_vector(529 downto 0);
-signal read_response_fifo_rdempty : std_logic;
-signal read_response_fifo_rdempty_1d : std_logic;
-signal read_response_fifo_wrfull : std_logic;
+signal read_response_fifo_wrreq : std_logic_vector(NUM_SELECTORS-1 downto 0);
+signal read_response_fifo_rdreq : std_logic_vector(NUM_SELECTORS-1 downto 0);
+signal read_response_fifo_rdreq_1d : std_logic_vector(NUM_SELECTORS-1 downto 0);
+signal read_response_fifo_q : read_response_fifo_type;
+signal read_response_fifo_rdempty : std_logic_vector(NUM_SELECTORS-1 downto 0);
+signal read_response_fifo_rdempty_1d : std_logic_vector(NUM_SELECTORS-1 downto 0);
+signal read_response_fifo_wrfull : std_logic_vector(NUM_SELECTORS-1 downto 0);
 ----------------------------------------------------------- read_response Signals END
 
 ----------------------------------------------------------- write_request Signals START
@@ -144,13 +144,13 @@ signal write_response_transactionID_200 : transactionID_200_type;
 signal current_write_response_fifo : integer range 0 to NUM_SELECTORS;
 
 signal write_response_fifo_data : std_logic_vector(15 downto 0);
-signal write_response_fifo_wrreq : std_logic;
-signal write_response_fifo_rdreq : std_logic;
-signal write_response_fifo_rdreq_1d : std_logic;
-signal write_response_fifo_q : std_logic_vector(15 downto 0);
-signal write_response_fifo_rdempty : std_logic;
-signal write_response_fifo_rdempty_1d : std_logic;
-signal write_response_fifo_wrfull : std_logic;
+signal write_response_fifo_wrreq : std_logic_vector(NUM_SELECTORS-1 downto 0);
+signal write_response_fifo_rdreq : std_logic_vector(NUM_SELECTORS-1 downto 0);
+signal write_response_fifo_rdreq_1d : std_logic_vector(NUM_SELECTORS-1 downto 0);
+signal write_response_fifo_q : transactionID_200_type;
+signal write_response_fifo_rdempty : std_logic_vector(NUM_SELECTORS-1 downto 0);
+signal write_response_fifo_rdempty_1d : std_logic_vector(NUM_SELECTORS-1 downto 0);
+signal write_response_fifo_wrfull : std_logic_vector(NUM_SELECTORS-1 downto 0);
 ----------------------------------------------------------- write_response Signals START
 
 ----------------------------------------------------------- Configuration Signals START
@@ -425,7 +425,7 @@ Gen_read_request: for n in 0 to NUM_SELECTORS-1 generate
     read_request_fifo: async_fifo
     generic map (
         FIFO_WIDTH => 60,
-        FIFO_DEPTH_BITS => FIFO_DEPTH_BITS,
+        FIFO_DEPTH_BITS => REQUEST_FIFO_DEPTH_BITS,
         ACK => 1)
     port map(
         data => read_request_fifo_data(n),
@@ -440,45 +440,46 @@ end generate Gen_read_request;
 ----------------------------------------------------------- read_request END
 
 ----------------------------------------------------------- read_response START
-current_read_response_fifo <= to_integer( unsigned(read_response_fifo_q(527 downto 526)) );
-
-process(clk_200)
-begin
-if clk_200'event and clk_200 = '1' then
-    read_response_fifo_rdreq <= '0';
-    if read_response_fifo_rdempty = '0' then
-        read_response_fifo_rdreq <= '1';
-    end if;
-
-    read_response_fifo_rdempty_1d <= read_response_fifo_rdempty;
-    read_response_fifo_rdreq_1d <= read_response_fifo_rdreq;
-
-    read_response_data_200 <= (others => read_response_fifo_q(511 downto 0));
-    read_response_transactionID_200 <= (others => read_response_fifo_q(527 downto 512));
-    read_response_cacheline_number_200 <= (others => read_response_fifo_q(529 downto 528));
-    read_response_200 <= (others => '0');
-    if read_response_fifo_rdreq_1d = '1' then
-        read_response_200(current_read_response_fifo) <= read_response_fifo_rdreq_1d and (not read_response_fifo_rdempty_1d);
-    end if;
-end if;
-end process;
-
 read_response_fifo_data <= read_response_cacheline_number & read_response_transactionID & read_response_data;
-read_response_fifo_wrreq <= read_response;
-read_response_fifo: async_fifo
-generic map (
-    FIFO_WIDTH => 530,
-    FIFO_DEPTH_BITS => FIFO_DEPTH_BITS,
-    ACK => 0)
-port map(
-    data => read_response_fifo_data,
-    wrreq => read_response_fifo_wrreq,
-    rdreq => read_response_fifo_rdreq,
-    wrclk => clk_400,
-    rdclk => clk_200,
-    q => read_response_fifo_q,
-    rdempty => read_response_fifo_rdempty,
-    wrfull => read_response_fifo_wrfull);
+
+Gen_read_response: for n in 0 to NUM_SELECTORS-1 generate
+    process(clk_200)
+    begin
+    if clk_200'event and clk_200 = '1' then
+        read_response_fifo_rdreq(n) <= '0';
+        if read_response_fifo_rdempty(n) = '0' then
+            read_response_fifo_rdreq(n) <= '1';
+        end if;
+
+        read_response_fifo_rdempty_1d(n) <= read_response_fifo_rdempty(n);
+        read_response_fifo_rdreq_1d(n) <= read_response_fifo_rdreq(n);
+
+        read_response_data_200(n) <= read_response_fifo_q(n)(511 downto 0);
+        read_response_transactionID_200(n) <= read_response_fifo_q(n)(527 downto 512);
+        read_response_cacheline_number_200(n) <= read_response_fifo_q(n)(529 downto 528);
+        read_response_200(n) <= '0';
+        if read_response_fifo_rdreq_1d(n) = '1' then
+            read_response_200(n) <= read_response_fifo_rdreq_1d(n) and (not read_response_fifo_rdempty_1d(n));
+        end if;
+    end if;
+    end process;
+
+    read_response_fifo_wrreq(n) <= read_response when to_integer( unsigned(read_response_fifo_data(527 downto 526)) ) = n else '0';
+    read_response_fifo: async_fifo
+    generic map (
+        FIFO_WIDTH => 530,
+        FIFO_DEPTH_BITS => RESPONSE_FIFO_DEPTH_BITS,
+        ACK => 0)
+    port map(
+        data => read_response_fifo_data,
+        wrreq => read_response_fifo_wrreq(n),
+        rdreq => read_response_fifo_rdreq(n),
+        wrclk => clk_400,
+        rdclk => clk_200,
+        q => read_response_fifo_q(n),
+        rdempty => read_response_fifo_rdempty(n),
+        wrfull => read_response_fifo_wrfull(n));
+end generate Gen_read_response;
 ----------------------------------------------------------- read_response END
 
 ----------------------------------------------------------- write_request START
@@ -625,7 +626,7 @@ Gen_write_request: for n in 0 to NUM_SELECTORS-1 generate
     write_request_fifo: async_fifo
     generic map (
         FIFO_WIDTH => 570,
-        FIFO_DEPTH_BITS => FIFO_DEPTH_BITS,
+        FIFO_DEPTH_BITS => REQUEST_FIFO_DEPTH_BITS,
         ACK => 0)
     port map (
         data => write_request_fifo_data(n),
@@ -640,31 +641,6 @@ end generate Gen_write_request;
 ----------------------------------------------------------- write_request END
 
 ----------------------------------------------------------- write_response START
-current_write_response_fifo <= to_integer(unsigned(write_response_fifo_q(15 downto 14))) when to_integer(unsigned(write_response_fifo_q(15 downto 14))) < NUM_SELECTORS else NUM_SELECTORS;
-
-process(clk_200)
-begin
-if clk_200'event and clk_200 = '1' then
-    write_response_fifo_rdreq <= '0';
-    if write_response_fifo_rdempty = '0' then
-        write_response_fifo_rdreq <= '1';
-    end if;
-
-    write_response_fifo_rdempty_1d <= write_response_fifo_rdempty;
-    write_response_fifo_rdreq_1d <= write_response_fifo_rdreq;
-
-    write_response_transactionID_200 <= (others => write_response_fifo_q);
-    write_response_200 <= (others => '0');
-    if write_response_fifo_rdreq_1d = '1' then
-        if current_write_response_fifo < NUM_SELECTORS then
-            write_response_200(current_write_response_fifo) <= write_response_fifo_rdreq_1d and (not write_response_fifo_rdempty_1d);
-        else
-            write_response_200 <= ( others => (write_response_fifo_rdreq_1d and (not write_response_fifo_rdempty_1d)) );
-        end if;
-    end if;
-end if;
-end process;
-
 process(clk_400)
 begin
 if clk_400'event and clk_400 = '1' then
@@ -675,21 +651,42 @@ end if;
 end process;
 
 write_response_fifo_data <= write_response_transactionID;
-write_response_fifo_wrreq <= write_response;
-write_response_fifo: async_fifo
-generic map (
-    FIFO_WIDTH => 16,
-    FIFO_DEPTH_BITS => FIFO_DEPTH_BITS,
-    ACK => 0)
-port map (
-    data => write_response_fifo_data,
-    wrreq => write_response_fifo_wrreq,
-    rdreq => write_response_fifo_rdreq,
-    wrclk => clk_400,
-    rdclk => clk_200,
-    q => write_response_fifo_q,
-    rdempty => write_response_fifo_rdempty,
-    wrfull => write_response_fifo_wrfull);
+Gen_write_response: for n in 0 to NUM_SELECTORS-1 generate
+    process(clk_200)
+    begin
+    if clk_200'event and clk_200 = '1' then
+        write_response_fifo_rdreq(n) <= '0';
+        if write_response_fifo_rdempty(n) = '0' then
+            write_response_fifo_rdreq(n) <= '1';
+        end if;
+
+        write_response_fifo_rdempty_1d(n) <= write_response_fifo_rdempty(n);
+        write_response_fifo_rdreq_1d(n) <= write_response_fifo_rdreq(n);
+
+        write_response_transactionID_200(n) <= write_response_fifo_q(n);
+        write_response_200(n) <= '0';
+        if write_response_fifo_rdreq_1d(n) = '1' then
+            write_response_200(n) <= write_response_fifo_rdreq_1d(n) and (not write_response_fifo_rdempty_1d(n));
+        end if;
+    end if;
+    end process;
+    
+    write_response_fifo_wrreq(n) <= write_response when to_integer(unsigned(write_response_transactionID(15 downto 14))) = n else '0';
+    write_response_fifo: async_fifo
+    generic map (
+        FIFO_WIDTH => 16,
+        FIFO_DEPTH_BITS => RESPONSE_FIFO_DEPTH_BITS,
+        ACK => 0)
+    port map (
+        data => write_response_fifo_data,
+        wrreq => write_response_fifo_wrreq(n),
+        rdreq => write_response_fifo_rdreq(n),
+        wrclk => clk_400,
+        rdclk => clk_200,
+        q => write_response_fifo_q(n),
+        rdempty => write_response_fifo_rdempty(n),
+        wrfull => write_response_fifo_wrfull(n));
+end generate Gen_write_response;
 ----------------------------------------------------------- write_response END
 
 ----------------------------------------------------------- Configuration START
@@ -752,7 +749,7 @@ write_offset_200                <= configfifo_q(31 downto 0);
 configfifo: async_fifo
 generic map (
     FIFO_WIDTH => 448+2*ADDRESS_WIDTH,
-    FIFO_DEPTH_BITS => 6,
+    FIFO_DEPTH_BITS => REQUEST_FIFO_DEPTH_BITS,
     ACK => 0)
 port map(
 	data => configfifo_data,

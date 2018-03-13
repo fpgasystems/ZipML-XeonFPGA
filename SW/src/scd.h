@@ -135,6 +135,36 @@ public:
 		}
 	}
 
+	void print_timeout() {
+		uint32_t NumberOfRequestedReads = interfaceFPGA->readFromMemory32('i', 0);
+		uint32_t NumberOfReceivedReads = interfaceFPGA->readFromMemory32('i', 1);
+		uint32_t residual_NumberOfReceivedReads = interfaceFPGA->readFromMemory32('i', 2);
+		uint32_t b_NumberOfReceivedReads = interfaceFPGA->readFromMemory32('i', 3);
+		uint32_t a_NumberOfReceivedReads = interfaceFPGA->readFromMemory32('i', 4);
+		uint32_t residual_NumberOfWriteRequests = interfaceFPGA->readFromMemory32('i', 5);
+		uint32_t step_NumberOfWriteRequests = interfaceFPGA->readFromMemory32('i', 6);
+		uint32_t NumberOfWriteResponses = interfaceFPGA->readFromMemory32('i', 7);
+		uint32_t completed_epochs = interfaceFPGA->readFromMemory32('i', 8);
+		uint32_t reorder_free_count = interfaceFPGA->readFromMemory32('i', 9);
+		uint32_t feature_update_index = interfaceFPGA->readFromMemory32('i', 10);
+		uint32_t write_batch_index = interfaceFPGA->readFromMemory32('i', 11);
+		uint32_t decompressor_out_fifo_free_count = interfaceFPGA->readFromMemory32('i', 12);
+
+		cout << "NumberOfRequestedReads: " << NumberOfRequestedReads << endl;
+		cout << "NumberOfReceivedReads: " << NumberOfReceivedReads << endl;
+		cout << "residual_NumberOfReceivedReads: " << residual_NumberOfReceivedReads << endl;
+		cout << "b_NumberOfReceivedReads: " << b_NumberOfReceivedReads << endl;
+		cout << "a_NumberOfReceivedReads: " << a_NumberOfReceivedReads << endl;
+		cout << "residual_NumberOfWriteRequests: " << residual_NumberOfWriteRequests << endl;
+		cout << "step_NumberOfWriteRequests: " << step_NumberOfWriteRequests << endl;
+		cout << "NumberOfWriteResponses: " << NumberOfWriteResponses << endl;
+		cout << "completed_epochs: " << completed_epochs << endl;
+		cout << "reorder_free_count: " << reorder_free_count << endl;
+		cout << "feature_update_index: " << feature_update_index << endl;
+		cout << "write_batch_index: " << write_batch_index << endl;
+		cout << "decompressor_out_fifo_free_count: " << decompressor_out_fifo_free_count << endl;
+	}
+
 	// Data loading functions
 	void load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures);
 	void generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, char binary);
@@ -1150,6 +1180,8 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
 	cout << "rest: " << rest << endl;
 
+	uint32_t enableMultiline = 1;
+
 	uint32_t numMinibatchesAssigned = 0;
 	uint32_t numMinibatchesToAssign[NUM_FINSTANCES];
 	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
@@ -1170,8 +1202,6 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 		address32 = copy_data_into_FPGA_memory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs);
 	else
 		address32 = copy_compressed_data_into_FPGA_memory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs);
-
-
 
 	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
 	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
@@ -1202,7 +1232,7 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 		temp_reg = 0;
 		temp_reg = ((uint64_t)numEpochs << 32) | ((uint64_t)*tempStepSizeAddr);
 		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp_reg);
-		temp_reg = ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;
+		temp_reg = ((uint64_t)enableMultiline << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;
 		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp_reg);
 	}
 
