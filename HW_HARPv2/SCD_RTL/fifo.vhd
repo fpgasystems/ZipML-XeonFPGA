@@ -55,9 +55,9 @@ signal bram_dout : std_logic_vector(FIFO_WIDTH-1 downto 0);
 
 signal bram_re_1d : std_logic;
 
-signal internal_empty : std_logic;
-
 signal internal_count : unsigned(FIFO_DEPTH_BITS-1 downto 0);
+signal internal_empty : std_logic;
+signal internal_full : std_logic;
 
 component simple_dual_port_ram_single_clock
 generic(
@@ -87,28 +87,21 @@ port map (
 	q => bram_dout);
 
 count <= std_logic_vector(internal_count);
-internal_count <= 	wpointer - rpointer when wpointer > rpointer else
-					wpointer + 1 + FIFO_DEPTH - rpointer;
-
-internal_empty <= 	'0' when internal_count > 0 else
-					'1';
-
 empty <= internal_empty;
+full <= internal_full;
 
 process(clk)
 begin
 if clk'event and clk = '1' then
-	if internal_count < FIFO_DEPTH then
-		full <= '0';
-	else
-		full <= '1';
-	end if;
 	if internal_count < to_unsigned(FIFO_ALMOSTFULL_THRESHOLD, FIFO_DEPTH_BITS) then
 		almostfull <= '0';
 	else
 		almostfull <= '1';
 	end if;
+
 	bram_din <= din;
+	bram_re_1d <= bram_re;
+
 	if resetn ='0' then
 		rpointer <= (others => '0');
 		wpointer <= (others => '0');
@@ -118,11 +111,12 @@ if clk'event and clk = '1' then
 		bram_raddr <= (others => '0');
 		bram_waddr <= (others => '0');
 
-		bram_re_1d <= '0';
-
 		valid <= '0';
-
 		dout <= (others => '0');
+		
+		internal_count <= (others => '0');
+		internal_empty <= '1';
+		internal_full <= '0';
 	else
 		bram_we <= '0';
 		if we = '1' then
@@ -143,8 +137,21 @@ if clk'event and clk = '1' then
 			valid <= '1';
 			dout <= bram_dout;
 		end if;
+		
+		if we = '1' and (re = '1' nand internal_empty = '0') then
+			internal_count <= internal_count+1;
+			if internal_count = FIFO_DEPTH-1 then
+				internal_full <= '1';
+			end if;
+			internal_empty <= '0';
+		elsif we = '0' and (re = '1' and internal_empty = '0') then
+			internal_count <= internal_count-1;
+			if internal_count = 1 then
+				internal_empty <= '1';
+			end if;
+			internal_full <= '0';
+		end if;
 
-		bram_re_1d <= bram_re;
 	end if;
 end if;
 end process;

@@ -68,6 +68,7 @@ architecture behavioral of floatFSCD is
 
 signal timeout_occured : std_logic;
 signal timeout : unsigned(31 downto 0);
+signal resetn_internal : std_logic;
 signal reset : std_logic;
 constant LOG2_VALUE_WIDTH : integer := 5;
 constant LOG2_LINE_WIDTH : integer := 9;
@@ -334,7 +335,7 @@ begin
 delta0 <= delta(31 downto 0);
 new_residual0 <= new_residual(31 downto 0);
 
-reset <= not resetn;
+reset <= not resetn_internal;
 
 allowed_batch_to_read <= std_logic_vector(write_batch_index);
 request_receive_lines: request_receive
@@ -344,7 +345,7 @@ generic map (
 	LOG2_MAX_NUMFEATURES => 15)
 port map (
 	clk => clk,
-	resetn => resetn,
+	resetn => resetn_internal,
 
 	start => start,
 	restart => epoch_start,
@@ -388,7 +389,7 @@ generic map (
 	LOG2_BUFFER_DEPTH => 8)
 port map (
 	clk => clk,
-	resetn => resetn,
+	resetn => resetn_internal,
 	to_integer_scaler => to_integer_scaler,
 	in_valid => decompressor_in_valid,
 	in_data => response_data,
@@ -441,7 +442,7 @@ generic map (
 	FIFO_ALMOSTFULL_THRESHOLD => 2**LOG2_MAX_iBATCHSIZE-30)
 port map (
 	clk => clk,
-	resetn => resetn,
+	resetn => resetn_internal,
 
 	we => a_fifo_we,
 	din => a_fifo_din,
@@ -458,7 +459,7 @@ generic map (
 	VALUES_PER_LINE => VALUES_PER_LINE)
 port map (
 	clk => clk,
-	resetn => resetn,
+	resetn => resetn_internal,
 	trigger => residual_minus_b_trigger,
 	vector1 => residual_store_dout,
 	vector2 => b_store_dout,
@@ -471,7 +472,7 @@ generic map (
 	LOG2_VALUES_PER_LINE => LOG2_VALUES_PER_LINE)
 port map (
 	clk => clk,
-	resetn => resetn,
+	resetn => resetn_internal,
 	trigger => residual_minus_b_valid,
 	accumulation_count => batch_size,
 	vector1 => residual_minus_b,
@@ -493,7 +494,7 @@ generic map (
 	VALUES_PER_LINE => VALUES_PER_LINE)
 port map (
 	clk => clk,
-	resetn => resetn,
+	resetn => resetn_internal,
 	trigger => a_fifo_valid,
 	scalar => step,
 	vector => a_fifo_dout,
@@ -506,7 +507,7 @@ generic map (
 	VALUES_PER_LINE => VALUES_PER_LINE)
 port map (
 	clk => clk,
-	resetn => resetn,
+	resetn => resetn_internal,
 	trigger => delta_valid,
 	vector1 => residual_store_loading_dout,
 	vector2 => delta,
@@ -517,6 +518,8 @@ port map (
 process(clk)
 begin
 if clk'event and clk = '1' then
+	resetn_internal <= resetn;
+
 	NumberOfWriteRequests <= step_NumberOfWriteRequests + residual_NumberOfWriteRequests;
 	NumberOfPendingWrites <= NumberOfWriteRequests - NumberOfWriteResponses;
 
@@ -535,7 +538,7 @@ if clk'event and clk = '1' then
 	iBATCH_SIZE <= unsigned(batch_size);
 	write_iBATCH_OFFSET <= write_batch_index*iBATCH_SIZE;
 
-	if resetn = '0' then
+	if resetn_internal = '0' then
 		timeout_occured <= '0';
 		timeout <= (others => '0');
 

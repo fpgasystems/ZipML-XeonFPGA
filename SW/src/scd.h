@@ -569,6 +569,11 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
 
+		double decryption_time = 0;
+		double decompression_time = 0;
+		double dot_product_time = 0;
+		double residual_update_time = 0;
+		double temp_time1, temp_time2, temp_time3;
 		double start = get_time();
 
 		for (uint32_t m = 0; m < numMinibatches; m++) {
@@ -579,26 +584,40 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 					if (m > 0)
 						compressed_a_offset = compressed_a_sizes[j][m-1];
 
+					temp_time1 = get_time();
 					decrypt_column(encrypted_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn1);
+					temp_time2 = get_time();
+					decryption_time += (temp_time2-temp_time1);
 					decompress_column((uint32_t*)transformedColumn1, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
+					temp_time3 = get_time();
+					decompression_time += (temp_time3-temp_time2);
 				}
 				else if (useEncrypted == 1) {
+					temp_time1 = get_time();
 					decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn2);
+					temp_time2 = get_time();
+					decryption_time += (temp_time2-temp_time1);
 				}
 				else if (useCompressed == 1) {
+					temp_time1 = get_time();
 					int32_t compressed_a_offset = 0;
 					if (m > 0)
 						compressed_a_offset = compressed_a_sizes[j][m-1];
 					decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
+					temp_time2 = get_time();
+					decompression_time += (temp_time2-temp_time1);
 				}
 				else {
 					transformedColumn2 = a[j] + m*minibatchSize;
 				}
 
+				temp_time1 = get_time();
 				float gradient = 0;
 				for (uint32_t i = 0; i < minibatchSize; i++) {
 					gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*transformedColumn2[i];
 				}
+				temp_time2 = get_time();
+				dot_product_time += (temp_time2-temp_time1);
 
 				// cout << "gradient: " << gradient << endl;
 				float step = stepSize*(gradient/minibatchSize);
@@ -608,9 +627,12 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 				for (uint32_t i = 0; i < minibatchSize; i++) {
 					residual[m*minibatchSize + i] -= step*transformedColumn2[i];
 				}
+				temp_time3 = get_time();
+				residual_update_time += (temp_time3-temp_time2);
 			}
 		}
 
+		temp_time1 = get_time();
 		for (uint32_t j = 0; j < numFeatures; j++) {
 			x_end[j] = 0;
 		}
@@ -624,6 +646,11 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 		}
 
 		double end = get_time();
+		cout << "decryption_time:" << decryption_time << endl;
+		cout << "decompression_time: " << decompression_time << endl;
+		cout << "dot_product_time: " << dot_product_time << endl;
+		cout << "residual_update_time: " << residual_update_time << endl;
+		cout << "x_average_time: " << end-temp_time1 << endl;
 		cout << "Time for one epoch: " << end-start << endl;
 
 		if (x_history != NULL) {
@@ -1191,10 +1218,11 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 	uint32_t numMinibatchesToAssign[NUM_FINSTANCES];
 	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
 		if (numMinibatchesAssigned < numMinibatches) {
-			if (n == NUM_FINSTANCES-1)
+			uint32_t temp = numMinibatches/numInstancesToUse + (numMinibatches%numInstancesToUse > 0);
+			if (temp > numMinibatches - numMinibatchesAssigned)
 				numMinibatchesToAssign[n] = numMinibatches - numMinibatchesAssigned;
 			else
-				numMinibatchesToAssign[n] = numMinibatches/numInstancesToUse + (numMinibatches%numInstancesToUse > 0);
+				numMinibatchesToAssign[n] = temp;
 		}
 		else
 			numMinibatchesToAssign[n] = 0;
