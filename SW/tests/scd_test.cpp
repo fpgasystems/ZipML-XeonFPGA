@@ -27,29 +27,41 @@ using namespace std;
 
 int main(int argc, char* argv[]) {
 
+	cpu_set_t cpuset;
+	pthread_t thread = pthread_self();
+	pthread_attr_t attr;
+	pthread_getattr_np(thread, &attr);
+	CPU_ZERO(&cpuset);
+	CPU_SET(0, &cpuset);
+	pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset);
+
+
 	char* pathToDataset;
 	uint32_t numSamples;
 	uint32_t numFeatures;
+	uint32_t miniBatchSize = 512;
+	uint32_t numInstances = 1;
 	uint32_t useEncryption = 0;
 	uint32_t useCompression = 0;
-	if (argc != 6) {
-		cout << "Usage: ./ZipML.exe <pathToDataset> <numSamples> <numFeatures> <encrypt> <compress>" << endl;
+	if (argc != 8) {
+		cout << "Usage: ./ZipML.exe <pathToDataset> <numSamples> <numFeatures> <miniBatchSize> <f_instances> <encrypt> <compress>" << endl;
 		return 0;
 	}
 	else {
 		pathToDataset = argv[1];
 		numSamples = atoi(argv[2]);
 		numFeatures = atoi(argv[3]);
-		useEncryption = atoi(argv[4]);
-		useCompression = atoi(argv[5]);
+		miniBatchSize = atoi(argv[4]);
+		numInstances = atoi(argv[5]);
+		useEncryption = atoi(argv[6]);
+		useCompression = atoi(argv[7]);
 	}
 
 	uint32_t stepSizeShifter = 3;
-	uint32_t numEpochs = 2;
-	uint32_t miniBatchSize = 64;
+	uint32_t numEpochs = 10;
 
 	// Do SCD
-	scd scd_app(1);
+	scd scd_app(0);
 
 	// scd_app.load_libsvm_data(pathToDataset, numSamples, numFeatures);
 	// scd_app.a_normalize(0, 'c');
@@ -68,12 +80,43 @@ int main(int argc, char* argv[]) {
 		scd_app.encrypt_a(miniBatchSize, useCompression);
 	}
 	
-	scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
+	// scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
 
-	scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
+	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
 
-	scd_app.float_linreg_FSCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, useEncryption, useCompression, VALUE_TO_INT_SCALER, 4);
+	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), useEncryption, 0, VALUE_TO_INT_SCALER);
 
+	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, useCompression, VALUE_TO_INT_SCALER);
+
+	// scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
+
+	scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
+
+	// scd_app.AVXmulti_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
+
+	// scd_app.float_linreg_FSCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, useEncryption, useCompression, VALUE_TO_INT_SCALER, numInstances);
+	// scd_app.print_timeout();
+
+
+
+	// const unsigned NUM_TRIALS = 10;
+	// double total_time[NUM_TRIALS];
+	// for (uint32_t i = 0; i < NUM_TRIALS; i++) {
+	// 	total_time[i] = scd_app.AVXmulti_justread(miniBatchSize, useEncryption, useCompression);
+	// }
+	// double avg_time = 0;
+	// for (uint32_t i = 0; i < NUM_TRIALS; i++) {
+	// 	avg_time += total_time[i];
+	// }
+	// avg_time /= NUM_TRIALS;
+	// cout << "avg_time: " << avg_time << endl;
+	// double stdev_time = 0;
+	// for (uint32_t i = 0; i < NUM_TRIALS; i++) {
+	// 	stdev_time += (total_time[i] - avg_time)*(total_time[i] - avg_time) ;
+	// }
+	// stdev_time /= (NUM_TRIALS-1);
+	// stdev_time = sqrt(stdev_time);
+	// cout << "stdev_time: " << stdev_time << endl;
 
 
 
