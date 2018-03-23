@@ -43,11 +43,13 @@ port (
 	requested_reads_count : out std_logic_vector(31 downto 0);
 	reorder_free_count : out std_logic_vector(31 downto 0);
 	out_residual_valid : out std_logic;
+	out_model_valid : out std_logic;
 	out_b_valid : out std_logic;
 	out_a_valid : out std_logic;
 	out_index : out std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 
+	do_residual_update : in std_logic;
 	enable_decryption : in std_logic;
 	program_key_index : std_logic_vector(3 downto 0);
 	program_key : std_logic_vector(127 downto 0);
@@ -75,9 +77,9 @@ signal iRECEIVE_SIZE : unsigned(15 downto 0) := (others => '0');
 signal iBATCH_OFFSET : unsigned(31 downto 0) := (others => '0');
 signal iCOLUMN_SIZE : unsigned(31 downto 0) := (others => '0');
 
--- 0 read column offsets, 1 read residual, 2 read b, 3 read a
-signal read_state : std_logic_vector(1 downto 0) := (others => '0');
-signal receive_state : std_logic_vector(1 downto 0) := (others => '0');
+-- 0 read column offsets, 1 read residual, 2 read b, 3 read a, 4 read model
+signal read_state : std_logic_vector(2 downto 0) := (others => '0');
+signal receive_state : std_logic_vector(2 downto 0) := (others => '0');
 
 signal NumberOfPendingReads : unsigned(31 downto 0) := (others => '0');
 signal NumberOfRequestedReads : unsigned(31 downto 0) := (others => '0');
@@ -86,10 +88,12 @@ signal b_NumberOfRequestedReads : unsigned(31 downto 0) := (others => '0');
 signal a_NumberOfRequestedReads : unsigned(31 downto 0) := (others => '0');
 signal NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
 signal residual_NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
+signal model_NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
 signal b_NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
 signal a_NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
 
 signal offset_read_index : unsigned(LOG2_MAX_NUMFEATURES-4-1 downto 0) := (others => '0');
+signal model_read_index : unsigned(LOG2_MAX_NUMFEATURES-4-1 downto 0) := (others => '0');
 signal feature_index : unsigned(LOG2_MAX_NUMFEATURES-1 downto 0) := (others => '0');
 signal feature_index_in_line : integer range 0 to 15;
 signal feature_receive_index : unsigned(LOG2_MAX_NUMFEATURES-1 downto 0) := (others => '0');
@@ -270,11 +274,12 @@ if clk'event and clk = '1' then
 		iRECEIVE_SIZE <= (others => '0');
 
 		out_residual_valid <= '0';
+		out_model_valid <= '0';
 		out_b_valid <= '0';
 		out_a_valid_internal <= '0';
 
-		read_state <= B"00";
-		receive_state <= B"00";
+		read_state <= B"000";
+		receive_state <= B"000";
 
 		NumberOfRequestedReads <= (others => '0');
 		residual_NumberOfRequestedReads <= (others => '0');
@@ -282,10 +287,12 @@ if clk'event and clk = '1' then
 		a_NumberOfRequestedReads <= (others => '0');
 		NumberOfReceivedReads <= (others => '0');
 		residual_NumberOfReceivedReads <= (others => '0');
+		model_NumberOfReceivedReads <= (others => '0');
 		b_NumberOfReceivedReads <= (others => '0');
 		a_NumberOfReceivedReads <= (others => '0');
 
 		offset_read_index <= (others => '0');
+		model_read_index <= (others => '0');
 		feature_index <= (others => '0');
 		feature_receive_index <= (others => '0');
 		batch_index <= (others => '0');
@@ -314,7 +321,7 @@ if clk'event and clk = '1' then
 				reorder_start_address <= (others => '0');
 			end if;
 
-			if read_state = B"00" then
+			if read_state = B"000" then
 				read_request_address <= std_logic_vector(unsigned(a_address) + offset_read_index);
 				read_request_length <= B"00";
 
@@ -325,18 +332,32 @@ if clk'event and clk = '1' then
 				if offset_read_index = iNUMBER_OF_OFFSET_LINES-1 then
 					offset_read_index <= (others => '0');
 					new_column_read_allowed <= '0';
-					read_state <= B"01";
+					if do_residual_update = '1' then
+						read_state <= B"100";
+					else
+						read_state <= B"001";
+					end if;
 				else
 					offset_read_index <= offset_read_index + 1;
 				end if;
-			elsif read_state = B"01" then --read residual
+			elsif read_state = B"100" then --read model
+				read_request_address <= std_logic_vector(unsigned(step_address) + model_read_index);
+				read_request_length <= B"00";
+				
+				if model_read_index = iNUMBER_OF_OFFSET_LINES-1 then
+					model_read_index <= (others => '0');
+					read_state <= B"011";
+				else
+					model_read_index <= model_read_index + 1;
+				end if;
+			elsif read_state = B"001" then --read residual
 				read_request_address <= std_logic_vector(unsigned(residual_address) + iBATCH_OFFSET + i_index);
 				read_request_length <= B"00";
 				residual_NumberOfRequestedReads <= residual_NumberOfRequestedReads + 1;
 
 				if i_index = iBATCH_SIZE-1 then
 					i_index <= (others => '0');
-					read_state <= B"10";
+					read_state <= B"010";
 				else
 
 					if (i_index+4) < iBATCH_SIZE-1 and enable_multiline = '1'
@@ -360,14 +381,14 @@ if clk'event and clk = '1' then
 						i_index <= i_index + 1;
 					end if;
 				end if;
-			elsif read_state = B"10" then --read b
+			elsif read_state = B"010" then --read b
 				read_request_address <= std_logic_vector(unsigned(b_address) + iBATCH_OFFSET + i_index);
 				read_request_length <= B"00";
 				b_NumberOfRequestedReads <= b_NumberOfRequestedReads + 1;
 
 				if i_index = iBATCH_SIZE-1 then
 					i_index <= (others => '0');
-					read_state <= B"11";
+					read_state <= B"011";
 				else
 
 					if (i_index+4) < iBATCH_SIZE-1 and enable_multiline = '1'
@@ -410,7 +431,9 @@ if clk'event and clk = '1' then
 					new_column_read_allowed <= enable_staleness;
 					i_index <= (others => '0');	
 					if feature_index = iNUMBER_OF_FEATURES-1 then
-						read_state <= B"01";
+						if do_residual_update = '0' then
+							read_state <= B"001";
+						end if;
 						feature_index <= (others => '0');
 						batch_index <= batch_index + 1;
 					else
@@ -448,37 +471,51 @@ if clk'event and clk = '1' then
 		-- Receive lines
 		column_offset_we <= '0';
 		out_residual_valid <= '0';
+		out_model_valid <= '0';
 		out_b_valid <= '0';
 		out_a_valid_internal <= '0';
 		if reordered_resonse = '1' then
 			NumberOfReceivedReads <= NumberOfReceivedReads + 1;
 			out_index <= std_logic_vector(i_receive_index);
 
-			if receive_state = B"00" then
+			if receive_state = B"000" then
 				column_offset_we <= '1';
 				column_offset_din <= reordered_response_data;
 				column_offset_waddr <= std_logic_vector( i_receive_index(LOG2_MAX_NUMFEATURES-4-1 downto 0) );
 				if i_receive_index = iNUMBER_OF_OFFSET_LINES-1 then
 					i_receive_index <= (others => '0');
 					new_column_read_allowed <= '1';
-					receive_state <= B"01";
+					if do_residual_update = '1' then
+						receive_state <= B"100";
+					else
+						receive_state <= B"001";
+					end if;
 				else
 					i_receive_index <= i_receive_index + 1;
 				end if;
-			elsif receive_state = B"01" then --receive residual
+			elsif receive_state = B"100" then
+				out_model_valid <= '1';
+				if i_receive_index = iNUMBER_OF_OFFSET_LINES-1 then
+					i_receive_index <= (others => '0');
+					receive_state <= B"011";
+				else
+					i_receive_index <= i_receive_index + 1;
+				end if;
+				model_NumberOfReceivedReads <= model_NumberOfReceivedReads + 1;
+			elsif receive_state = B"001" then --receive residual
 				out_residual_valid <= '1';
 				if i_receive_index = iBATCH_SIZE-1 then
 					i_receive_index <= (others => '0');
-					receive_state <= B"10";
+					receive_state <= B"010";
 				else
 					i_receive_index <= i_receive_index + 1;
 				end if;
 				residual_NumberOfReceivedReads <= residual_NumberOfReceivedReads + 1;
-			elsif receive_state = B"10" then --receive b
+			elsif receive_state = B"010" then --receive b
 				out_b_valid <= '1';
 				if i_receive_index = iBATCH_SIZE-1 then
 					i_receive_index <= (others => '0');
-					receive_state <= B"11";
+					receive_state <= B"011";
 				else
 					i_receive_index <= i_receive_index + 1;
 				end if;
@@ -502,7 +539,9 @@ if clk'event and clk = '1' then
 					new_column_read_allowed <= '1';
 					i_receive_index <= (others => '0');
 					if feature_receive_index = iNUMBER_OF_FEATURES-1 then
-						receive_state <= B"01";
+						if do_residual_update = '0' then
+							receive_state <= B"001";
+						end if;
 						feature_receive_index <= (others => '0');
 					else
 						feature_receive_index <= feature_receive_index + 1;

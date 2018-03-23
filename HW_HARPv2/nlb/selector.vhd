@@ -204,6 +204,7 @@ port(
 	q : 	out std_logic_vector(DATA_WIDTH-1 downto 0));
 end component;
 
+signal do_residual_update : std_logic := '0';
 signal enable_multiline : std_logic := '0';
 signal enable_decompression : std_logic := '0';
 signal enable_staleness : std_logic := '0';
@@ -222,7 +223,8 @@ signal step_size : std_logic_vector(31 downto 0) := (others => '0');
 signal number_of_epochs : std_logic_vector(15 downto 0) := (others => '0');
 component floatFSCD
 generic(ADDRESS_WIDTH : integer := 32;
-		LOG2_MAX_iBATCHSIZE : integer := 9);
+		LOG2_MAX_iBATCHSIZE : integer := 9;
+		LOG2_MAX_NUMFEATURES: integer := 15);
 port(
 	clk: in std_logic;
 	resetn : in std_logic;
@@ -247,6 +249,7 @@ port(
 	start : in std_logic;
 	done : out std_logic;
 
+	do_residual_update : in std_logic;
 	enable_multiline : in std_logic;
 	enable_decompression : in std_logic;
 	enable_staleness : in std_logic;
@@ -321,7 +324,8 @@ done <= parti_done when unsigned(number_of_batches) > 0 else
 FSCD: floatFSCD
 generic map (
 	ADDRESS_WIDTH => ADDRESS_WIDTH,
-	LOG2_MAX_iBATCHSIZE => 11)
+	LOG2_MAX_iBATCHSIZE => 11,
+	LOG2_MAX_NUMFEATURES => 15)
 port map (
 	clk => clk_200,
 	resetn => resetn,
@@ -346,6 +350,7 @@ port map (
 	start => parti_start,
 	done => parti_done,
 
+	do_residual_update => do_residual_update,
 	enable_multiline => enable_multiline,
 	enable_decompression => enable_decompression,
 	enable_staleness => enable_staleness,
@@ -365,16 +370,18 @@ port map (
 process(clk_200)
 begin
 if clk_200'event and clk_200 = '1' then
+	program_key_index <= config5(23 downto 20);
+	program_key <= config7 & config6;
+
 	if to_integer(unsigned(instance_id)) = ID then
 		read_offset_internal <= read_offset;
 		write_offset_internal <= write_offset;
 
+		do_residual_update <= config5(24);
 		enable_multiline <= config5(18);
 		enable_decompression <= config5(1);
 		enable_staleness <= config5(0);
-		enable_decryption <= config5(19);
-		program_key_index <= config5(23 downto 20);
-		program_key <= config7 & config6;
+		enable_decryption <= config5(19);	
 		to_integer_scaler <= config5(17 downto 2);
 		a_address(ADDRESS_WIDTH-1 downto 32) <= (others => '0');
 		a_address(31 downto 0) <= config1(31 downto 0);

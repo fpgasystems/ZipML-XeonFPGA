@@ -21,7 +21,8 @@ use ieee.numeric_std.all;
 
 entity floatFSCD is
 generic(ADDRESS_WIDTH : integer := 32;
-		LOG2_MAX_iBATCHSIZE : integer := 9);
+		LOG2_MAX_iBATCHSIZE : integer := 9;
+		LOG2_MAX_NUMFEATURES: integer := 15);
 port(
 	clk: in std_logic;
 	resetn : in std_logic;
@@ -46,6 +47,7 @@ port(
 	start : in std_logic;
 	done : out std_logic;
 
+	do_residual_update : in std_logic;
 	enable_multiline : in std_logic;
 	enable_decompression : in std_logic;
 	enable_staleness : in std_logic;
@@ -96,6 +98,7 @@ signal NumberOfPendingWrites : unsigned(31 downto 0) := (others => '0');
 signal NumberOfWriteResponses : unsigned(31 downto 0) := (others => '0');
 
 signal i_receive_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
+signal i_model_index : unsigned(LOG2_MAX_NUMFEATURES-1 downto 0) := (others => '0');
 signal feature_update_index : unsigned(31 downto 0) := (others => '0');
 signal write_batch_index : unsigned(15 downto 0) := (others => '0');
 signal i_write_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
@@ -109,6 +112,7 @@ signal write_residual_back : std_logic;
 signal epoch_start : std_logic;
 signal reorder_free_count : std_logic_vector(31 downto 0);
 signal response_residual_valid : std_logic;
+signal response_model_valid : std_logic;
 signal response_b_valid : std_logic;
 signal response_a_valid : std_logic;
 signal response_index : std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
@@ -147,6 +151,16 @@ signal b_store_we : std_logic;
 signal b_store_re : std_logic;
 signal b_store_dout : std_logic_vector(511 downto 0);
 
+signal model_store_raddr : std_logic_vector(LOG2_MAX_NUMFEATURES-4-1 downto 0);
+signal model_store_waddr : std_logic_vector(LOG2_MAX_NUMFEATURES-4-1 downto 0);
+signal model_store_din : std_logic_vector(511 downto 0);
+signal model_store_we : std_logic;
+signal model_store_re : std_logic;
+signal model_store_re_1d : std_logic;
+signal i_model_mux : integer range 0 to 15;
+signal i_model_mux_1d : integer range 0 to 15;
+signal model_store_dout : std_logic_vector(511 downto 0);
+
 signal a_fifo_we : std_logic;
 signal a_fifo_din : std_logic_vector(511 downto 0);
 signal a_fifo_re : std_logic;
@@ -157,6 +171,10 @@ signal a_fifo_empty : std_logic;
 signal a_fifo_full : std_logic;
 signal a_fifo_almostfull: std_logic;
 signal a_fifo_free_count : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0);
+
+signal scalar_vector_mult_valid : std_logic;
+signal scalar_vector_mult_scalar : std_logic_vector(31 downto 0);
+signal scalar_vector_mult_vector : std_logic_vector(511 downto 0);
 
 signal residual_minus_b_trigger : std_logic;
 signal residual_minus_b_almost_valid : std_logic;
@@ -243,11 +261,13 @@ port (
 	requested_reads_count : out std_logic_vector(31 downto 0);
 	reorder_free_count : out std_logic_vector(31 downto 0);
 	out_residual_valid : out std_logic;
+	out_model_valid : out std_logic;
 	out_b_valid : out std_logic;
 	out_a_valid : out std_logic;
 	out_index : out std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 
+	do_residual_update : in std_logic;
 	enable_decryption : in std_logic;
 	program_key_index : std_logic_vector(3 downto 0);
 	program_key : std_logic_vector(127 downto 0);
@@ -342,7 +362,7 @@ request_receive_lines: request_receive
 generic map (
 	ADDRESS_WIDTH => ADDRESS_WIDTH,
 	LOG2_MAX_iBATCHSIZE => LOG2_MAX_iBATCHSIZE,
-	LOG2_MAX_NUMFEATURES => 15)
+	LOG2_MAX_NUMFEATURES => LOG2_MAX_NUMFEATURES)
 port map (
 	clk => clk,
 	resetn => resetn_internal,
@@ -363,11 +383,13 @@ port map (
 	requested_reads_count => NumberOfRequestedReads,
 	reorder_free_count => reorder_free_count,
 	out_residual_valid => response_residual_valid,
+	out_model_valid => response_model_valid,
 	out_b_valid => response_b_valid,
 	out_a_valid => response_a_valid,
 	out_index => response_index,
 	out_data => response_data,
 
+	do_residual_update => do_residual_update,
 	enable_decryption => enable_decryption,
 	program_key_index => program_key_index,
 	program_key => program_key,
@@ -434,6 +456,18 @@ port map (
 	we => b_store_we,
 	q => b_store_dout);
 
+model_store: simple_dual_port_ram_single_clock
+generic map (
+	DATA_WIDTH => 512,
+	ADDR_WIDTH => LOG2_MAX_NUMFEATURES-4)
+port map (
+	clk => clk,
+	raddr => model_store_raddr,
+	waddr => model_store_waddr,
+	data => model_store_din,
+	we => model_store_we,
+	q => model_store_dout);
+
 a_fifo_re <= dot_valid;
 a_fifo: fifo
 generic map (
@@ -489,15 +523,18 @@ port map (
 	clk => clk,
 	q => step);
 
+scalar_vector_mult_valid <= model_store_re_1d when do_residual_update = '1' else a_fifo_valid;
+scalar_vector_mult_scalar <= (not model_store_dout( 32*i_model_mux_1d + 31 ) & model_store_dout( 32*i_model_mux_1d + 30 downto 32*i_model_mux_1d )) when do_residual_update = '1' else step;
+scalar_vector_mult_vector <= input_vector(1) when do_residual_update = '1' else a_fifo_dout;
 COMP_scalar_vector_mult: float_scalar_vector_mult
 generic map (
 	VALUES_PER_LINE => VALUES_PER_LINE)
 port map (
 	clk => clk,
 	resetn => resetn_internal,
-	trigger => a_fifo_valid,
-	scalar => step,
-	vector => a_fifo_dout,
+	trigger => scalar_vector_mult_valid,
+	scalar => scalar_vector_mult_scalar,
+	vector => scalar_vector_mult_vector,
 	result_almost_valid => delta_almost_valid,
 	result_valid => delta_valid,
 	result => delta);
@@ -538,6 +575,9 @@ if clk'event and clk = '1' then
 	iBATCH_SIZE <= unsigned(batch_size);
 	write_iBATCH_OFFSET <= write_batch_index*iBATCH_SIZE;
 
+	model_store_re_1d <= model_store_re;
+	i_model_mux_1d <= i_model_mux;
+
 	if resetn_internal = '0' then
 		timeout_occured <= '0';
 		timeout <= (others => '0');
@@ -558,6 +598,7 @@ if clk'event and clk = '1' then
 		NumberOfWriteResponses <= (others => '0');
 
 		i_receive_index <= (others => '0');
+		i_model_index <= (others => '0');
 		feature_update_index <= (others => '0');
 		write_batch_index <= (others => '0');
 		i_write_index <= (others => '0');
@@ -597,24 +638,45 @@ if clk'event and clk = '1' then
 		end if;
 
 
+		model_store_we <= '0';
+		if response_model_valid = '1' then
+			model_store_we <= '1';
+			model_store_din <= response_data;
+			model_store_waddr <= std_logic_vector(response_index);
+		end if;
+
+
 		residual_store_re <= '0';
 		b_store_re <= '0';
+		model_store_re <= '0';
 		a_fifo_we <= '0';
 		if (response_a_valid = '1' and enable_decompression = '0') or decompressor_out_valid = '1' then
-			a_fifo_we <= '1';
-			a_fifo_din <= a_data;
 			input_vector(0) <= a_data;
 
-			residual_store_re <= '1';
-			b_store_re <= '1';
-			residual_store_raddr <= std_logic_vector(i_receive_index);
-			b_store_raddr <= std_logic_vector(i_receive_index);
+			if do_residual_update = '1' then
+				model_store_re <= '1';
+				model_store_raddr <= std_logic_vector(i_model_index(LOG2_MAX_NUMFEATURES-1 downto 4));
+				i_model_mux <= to_integer(i_model_index(3 downto 0));
+			else
+				a_fifo_we <= '1';
+				a_fifo_din <= a_data;
+				residual_store_re <= '1';
+				b_store_re <= '1';
+				residual_store_raddr <= std_logic_vector(i_receive_index);
+				b_store_raddr <= std_logic_vector(i_receive_index);
+			end if;
 
 			if i_receive_index = iBATCH_SIZE-1 then
 				i_receive_index <= (others => '0');
+				if i_model_index = iNUMBER_OF_FEATURES-1 then
+					i_model_index <= (others => '0');
+				else
+					i_model_index <= i_model_index + 1;
+				end if;
 			else
 				i_receive_index <= i_receive_index + 1;
 			end if;
+
 			a_NumberOfReceivedReads <= a_NumberOfReceivedReads + 1;
 		end if;
 
@@ -680,6 +742,14 @@ if clk'event and clk = '1' then
 			write_request <= '1';
 			write_request_address <= std_logic_vector(unsigned(residual_address) + write_iBATCH_OFFSET + i_writerequest_index);
 			write_request_data <= residual_store_loading_dout;
+
+			residual_store_we <= '1';
+			residual_store_waddr <= std_logic_vector(i_writerequest_index);
+			residual_store_din <= (others => '0');
+			residual_store_loading_we <= '1';
+			residual_store_loading_waddr <= std_logic_vector(i_writerequest_index);
+			residual_store_loading_din <= (others => '0');
+
 			if i_writerequest_index = iBATCH_SIZE-1 then
 				i_writerequest_index <= (others => '0');
 				finish_allowed <= '1';

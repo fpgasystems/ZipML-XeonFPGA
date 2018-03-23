@@ -59,7 +59,7 @@ public:
 
 	scd(char getFPGA){
 		page_size_in_cache_lines = 65536; // 65536 x 64B = 4 MB
-		pages_to_allocate = 256;
+		pages_to_allocate = 8;
 		numValuesPerLine = 16;
 
 		if (getFPGA == 1) {
@@ -167,6 +167,7 @@ public:
 
 	// Data loading functions
 	void load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures);
+	void load_raw_data(char* path_to_file, uint32_t _numSamples, uint32_t _numFeatures);
 	void generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, char binary);
 
 	// Normalization and data shaping
@@ -176,9 +177,10 @@ public:
 	void encrypt_a(uint32_t minibatchSize, char useCompressed);
 
 	float calculate_loss(float* x);
+	uint32_t calculate_accuracy(float* x);
 
 	void float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
-	void float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
+	void float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, uint32_t residualUpdatePeriod, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 #ifdef AVX2
 	void AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 	void AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
@@ -188,7 +190,7 @@ public:
 	uint32_t print_FPGA_memory();
 	uint32_t copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs, char useEncrypted);
 	uint32_t copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs, char useEncrypted);
-	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse);
+	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse);
 	
 	uint32_t decompress_column(uint32_t* compressedColumn, uint32_t inNumWords, float* decompressedColumn, uint32_t toIntegerScaler);
 	uint32_t compress_column(float* originalColumn, uint32_t inNumWords, uint32_t* compressedColumn, uint32_t toIntegerScaler);
@@ -248,13 +250,53 @@ void scd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _num
 		}
 		f.close();
 	}
-	else
+	else {
 		cout << "Unable to open file " << pathToFile << endl;
+		exit(1);
+	}
 
 	for (uint32_t i = 0; i < numSamples; i++) { // Bias term
 		a[0][i] = 1.0;
 	}
 	
+	cout << "numSamples: " << numSamples << endl;
+	cout << "numFeatures: " << numFeatures << endl;
+}
+
+void scd::load_raw_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures) {
+	cout << "Reading " << pathToFile << endl;
+
+	numSamples = _numSamples;
+	numFeatures = _numFeatures;
+
+	if (a != NULL)
+		free(a);
+	a = (float**)malloc(numFeatures*sizeof(float*));
+	for (uint32_t j = 0; j < numFeatures; j++) {
+		a[j] = (float*)aligned_alloc(64, numSamples*sizeof(float));
+	}
+	if (b != NULL)
+		free(b);
+	b = (float*)aligned_alloc(64, numSamples*sizeof(float));
+
+	FILE* f = fopen(pathToFile, "r");
+	if (f == NULL) {
+		cout << "Can't find files at pathToFile" << endl;
+		exit(1);
+	}
+
+	double* temp;
+	temp = (double*)malloc(numSamples*(numFeatures+1)*sizeof(double));
+	size_t readsize = fread(temp, sizeof(double), numSamples*(numFeatures+1), f);
+	for (uint32_t i = 0; i < numSamples; i++) {
+		b[i] = (float)temp[i*(numFeatures+1)];
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			a[j][i] = (float)temp[i*(numFeatures+1) + j + 1];
+		}
+	}
+	free(temp);
+	fclose(f);
+
 	cout << "numSamples: " << numSamples << endl;
 	cout << "numFeatures: " << numFeatures << endl;
 }
@@ -491,7 +533,8 @@ void scd::float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 		double start = get_time();
 
-		for (uint32_t m = 0; m < numMinibatches; m++) {
+		for (uint32_t k = 0; k < numMinibatches; k++) {
+			uint32_t m = numMinibatches*((float)(rand()-1)/(float)RAND_MAX);
 			for (uint32_t i = 0; i < minibatchSize; i++) {
 				float dot = 0;
 				for (uint32_t j = 0; j < numFeatures; j++) {
@@ -501,25 +544,8 @@ void scd::float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 					gradient[j] += (dot - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
 				}
 			}
-			// cout << "gradient[0]: " << gradient[0] << endl;
 			for (uint32_t j = 0; j < numFeatures; j++) {
 				x[j] -= stepSize*(gradient[j]/minibatchSize);
-				gradient[j] = 0.0;
-			}
-		}
-		// Handle the rest
-		if (rest > 0) {
-			for (uint32_t i = numSamples-rest; i < numSamples; i++) {
-				float dot = 0;
-				for (uint32_t j = 0; j < numFeatures; j++) {
-					dot += x[j]*a[j][i];
-				}
-				for (uint32_t j = 0; j < numFeatures; j++) {
-					gradient[j] += (dot - b[i])*a[j][i];
-				}
-			}
-			for (uint32_t j = 0; j < numFeatures; j++) {
-				x[j] -= stepSize*gradient[j];
 				gradient[j] = 0.0;
 			}
 		}
@@ -542,10 +568,11 @@ void scd::float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 	free(gradient);
 }
 
-void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler) {
+void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, uint32_t residualUpdatePeriod, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler) {
 	float* residual = (float*)aligned_alloc(64, numSamples*sizeof(float));
 	memset(residual, 0, numSamples*sizeof(float));
 
+	cout << "---------------------------------------" << endl;
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
@@ -555,21 +582,20 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
 	float* x_end = (float*)aligned_alloc(64, numFeatures*sizeof(float));
 	memset(x_end, 0, numFeatures*sizeof(float));
-
-	cout << "---------------------------------------" << endl;
+	
 	cout << "Initial loss: " << calculate_loss(x_end) << endl;
 
 	float* transformedColumn1 = NULL;
 	float* transformedColumn2 = NULL;
 	if (useEncrypted == 1 && useCompressed == 1) {
-		transformedColumn1 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
-		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+		transformedColumn1 = (float*)aligned_alloc(64, numMinibatchesAtATime*minibatchSize*sizeof(float));
+		transformedColumn2 = (float*)aligned_alloc(64, numMinibatchesAtATime*minibatchSize*sizeof(float));
 	}
-	else if (useEncrypted == 1 || useCompressed == 1) {
-		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	else {
+		transformedColumn2 = (float*)aligned_alloc(64, numMinibatchesAtATime*minibatchSize*sizeof(float));
 	}
 
-	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
+	for(uint32_t epoch = 0; epoch < numEpochs + (numEpochs/residualUpdatePeriod); epoch++) {
 
 		double decryption_time = 0;
 		double decompression_time = 0;
@@ -578,92 +604,195 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 		double temp_time1, temp_time2, temp_time3;
 		double start = get_time();
 
-		for (uint32_t m = 0; m < numMinibatches; m++) {
-			for (uint32_t j = 0; j < numFeatures; j++) {
+		for (uint32_t k = 0; k < numMinibatches/numMinibatchesAtATime; k++) {
 
-				if (useEncrypted == 1 && useCompressed == 1) {
-					int32_t compressed_a_offset = 0;
-					if (m > 0)
-						compressed_a_offset = compressed_a_sizes[j][m-1];
+			if (numMinibatchesAtATime > 1) {
 
-					temp_time1 = get_time();
-					decrypt_column(encrypted_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn1);
-					temp_time2 = get_time();
-					decryption_time += (temp_time2-temp_time1);
-					decompress_column((uint32_t*)transformedColumn1, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
-					temp_time3 = get_time();
-					decompression_time += (temp_time3-temp_time2);
-				}
-				else if (useEncrypted == 1) {
-					temp_time1 = get_time();
-					decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn2);
-					temp_time2 = get_time();
-					decryption_time += (temp_time2-temp_time1);
-				}
-				else if (useCompressed == 1) {
-					temp_time1 = get_time();
-					int32_t compressed_a_offset = 0;
-					if (m > 0)
-						compressed_a_offset = compressed_a_sizes[j][m-1];
-					decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
-					temp_time2 = get_time();
-					decompression_time += (temp_time2-temp_time1);
-				}
-				else {
-					transformedColumn2 = a[j] + m*minibatchSize;
+				uint32_t m[numMinibatchesAtATime];
+				for (uint32_t l = 0; l < numMinibatchesAtATime; l++) {
+					m[l] = l*(numMinibatches/numMinibatchesAtATime)+k;
 				}
 
-				temp_time1 = get_time();
-				float gradient = 0;
-				for (uint32_t i = 0; i < minibatchSize; i++) {
-					gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*transformedColumn2[i];
-				}
-				temp_time2 = get_time();
-				dot_product_time += (temp_time2-temp_time1);
+				for (uint32_t j = 0; j < numFeatures; j++) {
 
-				// cout << "gradient: " << gradient << endl;
-				float step = stepSize*(gradient/minibatchSize);
-				// cout << "step: " << step << endl;
-				x[m*numFeatures + j] -= step;
+					for (uint32_t l = 0; l < numMinibatchesAtATime; l++) {
+						if (useEncrypted == 1 && useCompressed == 1) {
+							int32_t compressed_a_offset = 0;
+							if (m[l] > 0)
+								compressed_a_offset = compressed_a_sizes[j][m[l]-1];
+							
+							temp_time1 = get_time();
+							decrypt_column(encrypted_a[j] + compressed_a_offset, compressed_a_sizes[j][m[l]] - compressed_a_offset, transformedColumn1 + l*minibatchSize);
+							temp_time2 = get_time();
+							decryption_time += (temp_time2-temp_time1);
+							decompress_column((uint32_t*)transformedColumn1 + l*minibatchSize, compressed_a_sizes[j][m[l]] - compressed_a_offset, transformedColumn2 + l*minibatchSize, toIntegerScaler);
+							temp_time3 = get_time();
+							decompression_time += (temp_time3-temp_time2);
+						}
+						else if (useEncrypted == 1) {
+							temp_time1 = get_time();
+							decrypt_column(encrypted_a[j] + m[l]*minibatchSize, minibatchSize, transformedColumn2 + l*minibatchSize);
+							temp_time2 = get_time();
+							decryption_time += (temp_time2-temp_time1);
+						}
+						else if (useCompressed == 1) {
+							temp_time1 = get_time();
+							int32_t compressed_a_offset = 0;
+							if (m[l] > 0)
+								compressed_a_offset = compressed_a_sizes[j][m[l]-1];
 
-				for (uint32_t i = 0; i < minibatchSize; i++) {
-					residual[m*minibatchSize + i] -= step*transformedColumn2[i];
+							decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m[l]] - compressed_a_offset, transformedColumn2 + l*minibatchSize, toIntegerScaler);
+							temp_time2 = get_time();
+							decompression_time += (temp_time2-temp_time1);
+						}
+						else {
+							for (uint32_t i = 0; i < minibatchSize; i++) {
+								transformedColumn2[l*minibatchSize + i] = a[j][m[l]*minibatchSize + i];
+							}
+						}
+					}
+
+					if ( (epoch+1)%(residualUpdatePeriod+1) == 0 ) {
+						for (uint32_t l = 0; l < numMinibatchesAtATime; l++) {
+							for (uint32_t i = 0; i < minibatchSize; i++) {
+								if (j == 0)
+									residual[m[l]*minibatchSize + i] = x_end[j]*transformedColumn2[l*minibatchSize + i];
+								else
+									residual[m[l]*minibatchSize + i] += x_end[j]*transformedColumn2[l*minibatchSize + i];
+							}
+						}
+					}
+					else {
+						temp_time1 = get_time();
+						float gradient = 0;
+						for (uint32_t l = 0; l < numMinibatchesAtATime; l++) {
+							for (uint32_t i = 0; i < minibatchSize; i++) {
+								gradient += (residual[m[l]*minibatchSize + i] - b[m[l]*minibatchSize + i])*transformedColumn2[l*minibatchSize + i];
+							}
+						}
+						temp_time2 = get_time();
+						dot_product_time += (temp_time2-temp_time1);
+
+						float step = stepSize*(gradient/minibatchSize);
+						x[k*numFeatures + j] -= step;
+
+						for (uint32_t l = 0; l < numMinibatchesAtATime; l++) {
+							for (uint32_t i = 0; i < minibatchSize; i++) {
+								residual[m[l]*minibatchSize + i] -= step*transformedColumn2[l*minibatchSize + i];
+							}
+						}
+						temp_time3 = get_time();
+						residual_update_time += (temp_time3-temp_time2);
+					}
 				}
-				temp_time3 = get_time();
-				residual_update_time += (temp_time3-temp_time2);
+			}
+			else {
+				uint32_t m = k;
+
+				for (uint32_t j = 0; j < numFeatures; j++) {
+
+					if (useEncrypted == 1 && useCompressed == 1) {
+						int32_t compressed_a_offset = 0;
+						if (m > 0)
+							compressed_a_offset = compressed_a_sizes[j][m-1];
+
+						temp_time1 = get_time();
+						decrypt_column(encrypted_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn1);
+						temp_time2 = get_time();
+						decryption_time += (temp_time2-temp_time1);
+						decompress_column((uint32_t*)transformedColumn1, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
+						temp_time3 = get_time();
+						decompression_time += (temp_time3-temp_time2);
+					}
+					else if (useEncrypted == 1) {
+						temp_time1 = get_time();
+						decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn2);
+						temp_time2 = get_time();
+						decryption_time += (temp_time2-temp_time1);
+					}
+					else if (useCompressed == 1) {
+						temp_time1 = get_time();
+						int32_t compressed_a_offset = 0;
+						if (m > 0)
+							compressed_a_offset = compressed_a_sizes[j][m-1];
+						decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
+						temp_time2 = get_time();
+						decompression_time += (temp_time2-temp_time1);
+					}
+					else {
+						transformedColumn2 = a[j] + m*minibatchSize;
+					}
+
+					if ( (epoch+1)%(residualUpdatePeriod+1) == 0 ) {
+						for (uint32_t i = 0; i < minibatchSize; i++) {
+							if (j == 0)
+								residual[m*minibatchSize + i] = x_end[j]*transformedColumn2[i];
+							else
+								residual[m*minibatchSize + i] += x_end[j]*transformedColumn2[i];
+						}
+						// cout << "residual[0]:" << residual[0] << endl;
+					}
+					else {
+						temp_time1 = get_time();
+						float gradient = 0;
+						for (uint32_t i = 0; i < minibatchSize; i++) {
+							gradient += (residual[m*minibatchSize + i] - b[m*minibatchSize + i])*transformedColumn2[i];
+						}
+						temp_time2 = get_time();
+						dot_product_time += (temp_time2-temp_time1);
+
+						// cout << "gradient: " << gradient << endl;
+						float step = stepSize*(gradient/minibatchSize);
+						x[m*numFeatures + j] -= step;
+						// cout << "step : " << step << endl;
+
+						for (uint32_t i = 0; i < minibatchSize; i++) {
+							residual[m*minibatchSize + i] -= step*transformedColumn2[i];
+						}
+						temp_time3 = get_time();
+						residual_update_time += (temp_time3-temp_time2);
+					}
+				}
 			}
 		}
 
-		temp_time1 = get_time();
-		for (uint32_t j = 0; j < numFeatures; j++) {
-			x_end[j] = 0;
+		if ( (epoch+1)%(residualUpdatePeriod+1) == 0 ) {
+			cout << "--> PERFORMED RESIDUAL UPDATE !!!" << endl;
 		}
-		for (uint32_t m = 0; m < numMinibatches; m++) {
+		else {
+			temp_time1 = get_time();
 			for (uint32_t j = 0; j < numFeatures; j++) {
-				x_end[j] += x[m*numFeatures + j];
+				x_end[j] = 0;
 			}
-		}
-		for (uint32_t j = 0; j < numFeatures; j++) {
-			x_end[j] = x_end[j]/numMinibatches;
-		}
-
-		double end = get_time();
-		cout << "decryption_time: " << decryption_time << endl;
-		cout << "decompression_time: " << decompression_time << endl;
-		cout << "dot_product_time: " << dot_product_time << endl;
-		cout << "residual_update_time: " << residual_update_time << endl;
-		cout << "x_average_time: " << end-temp_time1 << endl;
-		cout << "Time for one epoch: " << end-start << endl;
-
-		if (x_history != NULL) {
+			for (uint32_t k = 0; k < numMinibatches/numMinibatchesAtATime; k++) {
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					x_end[j] += x[k*numFeatures + j];
+				}
+			}
 			for (uint32_t j = 0; j < numFeatures; j++) {
-				x_history[epoch*numFeatures + j] = x_end[j];
+				x_end[j] = x_end[j]/(numMinibatches/numMinibatchesAtATime);
 			}
-		}
-		else
-			cout << "Loss " << epoch << ": " << calculate_loss(x_end) << endl;
 
-		cout << epoch << endl;
+			double end = get_time();
+			cout << "decryption_time: " << decryption_time << endl;
+			cout << "decompression_time: " << decompression_time << endl;
+			cout << "dot_product_time: " << dot_product_time << endl;
+			cout << "residual_update_time: " << residual_update_time << endl;
+			cout << "x_average_time: " << end-temp_time1 << endl;
+			cout << "Time for one epoch: " << end-start << endl;
+
+			if (x_history != NULL) {
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					x_history[epoch*numFeatures + j] = x_end[j];
+				}
+			}
+			else {
+				cout << "Loss " << epoch << ": " << calculate_loss(x_end) << endl;
+				cout << calculate_accuracy(x_end) << " corrects out of " << numSamples << endl;
+			}
+
+			cout << epoch << endl;
+		}
 	}
 
 	if (useEncrypted == 1 && useCompressed == 1) {
@@ -1425,7 +1554,7 @@ uint32_t scd::copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uin
 	return step_address[0]*numValuesPerLine;
 }
 
-void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse) {
+void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse) {
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
@@ -1455,104 +1584,174 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 	else
 		address32 = copy_compressed_data_into_FPGA_memory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs, useEncrypted);
 
-	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
-	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
-	float* x_end = (float*)aligned_alloc(64, numFeatures*sizeof(float));
-	memset(x_end, 0, numFeatures*sizeof(float));
+	float* x_history_local = (float*)aligned_alloc(64, numEpochs*numFeatures*sizeof(float));
+	memset(x_history_local, 0, numEpochs*numFeatures*sizeof(float));
+	float* x = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(x, 0, numFeatures*sizeof(float));
+	
+	cout << "Initial loss: " << calculate_loss(x) << endl;
 
-	cout << "Initial loss: " << calculate_loss(x_end) << endl;
+	float tempStepSize = stepSize/(float)minibatchSize;
+	uint32_t* tempStepSizeAddr = (uint32_t*) &tempStepSize;
 
+	uint64_t config[NUM_FINSTANCES][5];
 	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
 		interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
 
-		uint64_t temp_reg = 0;
 		interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_READ_OFFSET, 0);
 		interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_WRITE_OFFSET, 0);
 
-		temp_reg = 0;
-		temp_reg = ((uint64_t)b_address[n] << 32) | ((uint64_t)a_address[n]);
-		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, temp_reg);
-		temp_reg = 0;
-		temp_reg = ((uint64_t)residual_address[n] << 32) | ((uint64_t)step_address[n]);
-		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, temp_reg);
-		temp_reg = 0;
-		uint32_t minibatchSize_inCL = minibatchSize/numValuesPerLine;
-		temp_reg = ((uint64_t)minibatchSize_inCL << 48) | ((uint64_t)numMinibatchesToAssign[n] << 32) | ((uint64_t)numFeatures);
-		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, temp_reg);
-		float tempStepSize = stepSize/(float)minibatchSize;
-		uint32_t* tempStepSizeAddr = (uint32_t*) &tempStepSize;
-		temp_reg = 0;
-		temp_reg = ((uint64_t)numEpochs << 32) | ((uint64_t)*tempStepSizeAddr);
-		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp_reg);
-		temp_reg = ((uint64_t)useEncrypted << 19) | ((uint64_t)enableMultiline << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;
-		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp_reg);
+		config[n][0] = 0;
+		config[n][0] = ((uint64_t)b_address[n] << 32) | ((uint64_t)a_address[n]);
+		
+		config[n][1] = 0;
+		config[n][1] = ((uint64_t)residual_address[n] << 32) | ((uint64_t)step_address[n]);
+		
+		config[n][2] = 0;
+		config[n][2] = ((uint64_t)(minibatchSize/numValuesPerLine) << 48) | ((uint64_t)numMinibatchesToAssign[n] << 32) | ((uint64_t)numFeatures);
+		
+		config[n][3] = 0;
+		config[n][3] = ((uint64_t)numEpochs << 32) | ((uint64_t)*tempStepSizeAddr);
 
-		if (useEncrypted == 1) {
-			for (uint32_t i = 0; i < 15; i++) {
-				uint32_t temp_reg2 = ((uint64_t)i << 20) | temp_reg;
-				interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp_reg2);
-				interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG6, ((uint64_t*)KEYS_dec)[2*i]);
-				interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG7, ((uint64_t*)KEYS_dec)[2*i+1]);
-			}
-			uint32_t temp_reg2 = ((uint64_t)15 << 20) | temp_reg;
-			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp_reg2);
-			uint64_t* temp_ptr = (uint64_t*)ivec;
-			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG6, temp_ptr[0]);
-			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG7, temp_ptr[1]);
+		config[n][4] = 0;
+		config[n][4] = ((uint64_t)useEncrypted << 19) | ((uint64_t)enableMultiline << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;	
+	}
+	if (useEncrypted == 1) {
+		for (uint32_t i = 0; i < 15; i++) {
+			uint64_t config6 = ((uint64_t)i << 20) | config[0][4];
+			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, config6);
+			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG6, ((uint64_t*)KEYS_dec)[2*i]);
+			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG7, ((uint64_t*)KEYS_dec)[2*i+1]);
 		}
+		uint64_t config7 = ((uint64_t)15 << 20) | config[0][4];
+		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, config7);
+		uint64_t* temp_ptr = (uint64_t*)ivec;
+		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG6, temp_ptr[0]);
+		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG7, temp_ptr[1]);
 	}
 
+	uint32_t index[NUM_FINSTANCES];
+	
 	double start = get_time();
 
-	interfaceFPGA->doTransaction();
+	uint32_t epoch = 0;
+	if (numEpochs/residualUpdatePeriod > 0) {
+		for (epoch = 0; epoch+residualUpdatePeriod < numEpochs; epoch += residualUpdatePeriod) {
+			// Do normal epochs
+			for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+				interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
+				interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, config[n][0]);
+				interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, config[n][1]);
+				interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, config[n][2]);
+				uint64_t temp1 = ((uint64_t)residualUpdatePeriod << 32) | (config[n][3] & 0xFFFFFFFF);
+				interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp1);
+				interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, config[n][4]);
+			}
+
+			interfaceFPGA->startTransaction();
+
+			memset(index, 0, NUM_FINSTANCES*sizeof(uint32_t));
+			for (uint32_t e = 0; e < residualUpdatePeriod; e++) {
+				for (uint32_t n = 0; n < numInstancesToUse; n++) {
+					for (uint32_t m = 0; m < numMinibatchesToAssign[n]; m++) {
+						for (uint32_t j = 0; j < numFeatures; j++) {
+							float value = 0;
+							while (value == 0) {
+								value = interfaceFPGA->readFromMemoryFloat('i', step_address[n]*numValuesPerLine+index[n]);
+								SleepNano(100);
+							}
+							interfaceFPGA->writeToMemoryFloat('i', 0, step_address[n]*numValuesPerLine+index[n]);
+							x[j] -= value;
+							index[n]++;
+						}
+						if (index[n]%numValuesPerLine > 0)
+							index[n] += (numValuesPerLine - index[n]%numValuesPerLine);
+					}
+				}
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					x_history_local[(epoch+e)*numFeatures+j] = x[j]/numMinibatches;
+				}
+			}
+
+			interfaceFPGA->joinTransaction();
+
+			for (uint32_t n = 0; n < numInstancesToUse; n++) {
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					interfaceFPGA->writeToMemoryFloat('i', x[j]/numMinibatches, step_address[n]*numValuesPerLine+j);
+				}
+			}
+
+			// Do residual update
+			if (epoch + residualUpdatePeriod < numEpochs) {
+				for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+					interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
+					interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, config[n][0]);
+					interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, config[n][1]);
+					interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, config[n][2]);
+					uint64_t temp1 = ((uint64_t)1 << 32) | (config[n][3] & 0xFFFFFFFF);
+					interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp1);
+					uint64_t temp2 = ((uint64_t)1 << 24) | config[n][4];
+					interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp2);
+				}
+				interfaceFPGA->startTransaction();
+				interfaceFPGA->joinTransaction();
+			}
+		}
+	}
+	cout << "epoch: " << epoch << endl;
+
+	if (epoch < numEpochs) {
+		for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+			interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
+			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, config[n][0]);
+			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, config[n][1]);
+			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, config[n][2]);
+			uint64_t temp = ((uint64_t)(numEpochs - epoch) << 32) | (config[n][3] & 0xFFFFFFFF);
+			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp);
+			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, config[n][4]);
+		}
+		interfaceFPGA->startTransaction();
+		interfaceFPGA->joinTransaction();
+	}
 
 	double end = get_time();
 	cout << "Time for all epochs on the FPGA: " << end-start << endl;
 	cout << "Time for one epoch on the FPGA: " << (end-start)/numEpochs << endl;
 
-	uint32_t index[NUM_FINSTANCES];
-	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
-		index[n] = 0;
-	}
-	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
-
-		for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
-			for (uint32_t m = 0; m < numMinibatchesToAssign[n]; m++) {
-				for (uint32_t j = 0; j < numFeatures; j++) {
-					x[m*numFeatures + j] -= interfaceFPGA->readFromMemoryFloat('i', step_address[n]*numValuesPerLine+index[n]);
-					index[n]++;
+	memset(index, 0, NUM_FINSTANCES*sizeof(uint32_t));
+	if (epoch < numEpochs) {
+		for (uint32_t e = epoch; e < numEpochs; e++) {
+			for (uint32_t n = 0; n < numInstancesToUse; n++) {
+				for (uint32_t m = 0; m < numMinibatchesToAssign[n]; m++) {
+					for (uint32_t j = 0; j < numFeatures; j++) {
+						float value = interfaceFPGA->readFromMemoryFloat('i', step_address[n]*numValuesPerLine+index[n]);
+						x[j] -= value;
+						index[n]++;
+					}
+					if (index[n]%numValuesPerLine > 0)
+						index[n] += (numValuesPerLine - index[n]%numValuesPerLine);
 				}
-				if (index[n]%numValuesPerLine > 0)
-					index[n] += (numValuesPerLine - index[n]%numValuesPerLine);
 			}
-		}
-	
-		
-		for (uint32_t j = 0; j < numFeatures; j++) {
-			x_end[j] = 0;
-		}
-		for (uint32_t m = 0; m < numMinibatches; m++) {
 			for (uint32_t j = 0; j < numFeatures; j++) {
-				x_end[j] += x[m*numFeatures + j];
+				x_history_local[e*numFeatures + j] = x[j]/numMinibatches;
 			}
 		}
-		for (uint32_t j = 0; j < numFeatures; j++) {
-			x_end[j] = x_end[j]/numMinibatches;
-		}
+	}
+
+	for(uint32_t e = 0; e < numEpochs; e++) {
+		float* x_end = x_history_local + e*numFeatures;
 
 		if (x_history != NULL) {
 			for (uint32_t j = 0; j < numFeatures; j++) {
-				x_history[epoch*numFeatures + j] = x_end[j];
+				x_history[e*numFeatures + j] = x_end[j];
 			}
 		}
 		else
-			cout << "Loss " << epoch << ": " << calculate_loss(x_end) << endl;
+			cout << "Loss " << e << ": " << calculate_loss(x_end) << endl;
 	}
 
-	free(x);
-	free(x_end);
+	free(x_history_local);
 }
-
 
 float scd::calculate_loss(float* x) {
 	float loss = 0;
@@ -1566,6 +1765,20 @@ float scd::calculate_loss(float* x) {
 
 	loss /= (float)(2*numSamples);
 	return loss;
+}
+
+uint32_t scd::calculate_accuracy(float* x) {
+	uint32_t corrects = 0;
+	for(uint32_t i = 0; i < numSamples; i++) {
+		float dot = 0.0;
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			dot += x[j]*a[j][i];
+		}
+		if ( (dot >= 0.5 && b[i] == 1) || (dot < 0.5 && b[i] == 0) )
+			corrects++;
+	}
+
+	return corrects;
 }
 
 uint32_t scd::decompress_column(uint32_t* compressedColumn, uint32_t inNumWords, float* decompressedColumn, uint32_t toIntegerScaler) {

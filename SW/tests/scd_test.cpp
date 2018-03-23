@@ -57,30 +57,42 @@ int main(int argc, char* argv[]) {
 		useCompression = atoi(argv[7]);
 	}
 
-	uint32_t stepSizeShifter = 3;
-	uint32_t numEpochs = 10;
+	uint32_t stepSizeShifter = 2;
+	uint32_t numEpochs = 3;
+	uint32_t numMinibatchesAtATime = 1;
 
 	// Do SCD
-	scd scd_app(0);
+	scd scd_app(1);
 
 	// scd_app.load_libsvm_data(pathToDataset, numSamples, numFeatures);
 	// scd_app.a_normalize(0, 'c');
 	// scd_app.b_normalize(0, 0, 0.0);
 
+	// scd_app.load_raw_data(pathToDataset, numSamples, numFeatures);
+
 	scd_app.generate_synthetic_data(numSamples, numFeatures, 0);
 
 	scd_app.print_samples(1);
 
+	// if (useCompression == 1) {
+	// 	float compressionRate = scd_app.compress_a(miniBatchSize, VALUE_TO_INT_SCALER);
+	// 	cout << "compressionRate: " << compressionRate << endl;
+	// }
+	// if (useEncryption == 1) {
+	// 	scd_app.encrypt_a(miniBatchSize, useCompression);
+	// }
 
-	if (useCompression == 1) {
-		float compressionRate = scd_app.compress_a(miniBatchSize, VALUE_TO_INT_SCALER);
-		cout << "compressionRate: " << compressionRate << endl;
-	}
-	if (useEncryption == 1) {
-		scd_app.encrypt_a(miniBatchSize, useCompression);
-	}
+	// scd_app.float_linreg_SGD(NULL, numEpochs, miniBatchSize, 1.0/(1 << (stepSizeShifter+10)));
 	
-	// scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
+	// scd_app.float_linreg_SCD(NULL, numEpochs, numSamples, 1, 100, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
+
+	// scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1, 100, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
+
+	scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize/numMinibatchesAtATime, numMinibatchesAtATime, 2, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
+
+	// scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize/numMinibatchesAtATime, numMinibatchesAtATime, 2, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
+
+	// scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize/numMinibatchesAtATime, numMinibatchesAtATime, 1, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
 
 	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
 
@@ -90,12 +102,12 @@ int main(int argc, char* argv[]) {
 
 	// scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
 
-	scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
+	// scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
 
 	// scd_app.AVXmulti_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
 
-	// scd_app.float_linreg_FSCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, useEncryption, useCompression, VALUE_TO_INT_SCALER, numInstances);
-	// scd_app.print_timeout();
+	scd_app.float_linreg_FSCD(NULL, numEpochs, miniBatchSize, 2, 1.0/(1 << stepSizeShifter), 0, useEncryption, useCompression, VALUE_TO_INT_SCALER, numInstances);
+	scd_app.print_timeout();
 
 
 

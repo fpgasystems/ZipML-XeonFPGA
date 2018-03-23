@@ -405,25 +405,26 @@ float iFPGA::readFromMemoryFloat(char inOrOut, uint32_t address)
 	return 0;
 }
 
-void iFPGA::doTransaction()
-{
+void iFPGA::startTransaction() {
 	// Assert Device Reset
 	CSR_WRITE32(this, CSR_CTL, 0);
-
 	// De-assert Device Reset
 	CSR_WRITE32(this, CSR_CTL, 1);
-
-	volatile bt32bitCSR *StatusAddr = (volatile bt32bitCSR *)(m_DSMVirt  + DSM_STATUS_TEST_COMPLETE);
-
 	// Start the test
 	CSR_WRITE32(this, CSR_CTL, 3);
+}
 
+void iFPGA::joinTransaction() {
+	volatile bt32bitCSR *StatusAddr = (volatile bt32bitCSR *)(m_DSMVirt  + DSM_STATUS_TEST_COMPLETE);
 	// Wait for test completion
 	while( 0 == *StatusAddr ) {
 		SleepNano(100);
-	}
-
+	}	
 	*StatusAddr = 0;
+	// Assert Device Reset
+	CSR_WRITE32(this, CSR_CTL, 0);
+	// De-assert Device Reset
+	CSR_WRITE32(this, CSR_CTL, 1);
 }
 
 char iFPGA::allocateWorkspace(char IOmem_separate) {

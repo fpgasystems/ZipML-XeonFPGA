@@ -124,7 +124,8 @@ public:
 	void writeToMemoryFloat(char inOrOut, float dat, uint32_t address);
 	float readFromMemoryFloat(char inOrOut, uint32_t address);
 
-	void doTransaction();
+	void startTransaction();
+	void joinTransaction();
 
 #ifdef HARPv1
 	ICCIAFU       *m_AFUService;
