@@ -204,6 +204,7 @@ port(
 	q : 	out std_logic_vector(DATA_WIDTH-1 downto 0));
 end component;
 
+signal do_real_scd : std_logic := '0';
 signal do_residual_update : std_logic := '0';
 signal enable_multiline : std_logic := '0';
 signal enable_decompression : std_logic := '0';
@@ -249,6 +250,7 @@ port(
 	start : in std_logic;
 	done : out std_logic;
 
+	do_real_scd: in std_logic;
 	do_residual_update : in std_logic;
 	enable_multiline : in std_logic;
 	enable_decompression : in std_logic;
@@ -350,6 +352,7 @@ port map (
 	start => parti_start,
 	done => parti_done,
 
+	do_real_scd => do_real_scd,
 	do_residual_update => do_residual_update,
 	enable_multiline => enable_multiline,
 	enable_decompression => enable_decompression,
@@ -377,6 +380,7 @@ if clk_200'event and clk_200 = '1' then
 		read_offset_internal <= read_offset;
 		write_offset_internal <= write_offset;
 
+		do_real_scd <= config5(25);
 		do_residual_update <= config5(24);
 		enable_multiline <= config5(18);
 		enable_decompression <= config5(1);

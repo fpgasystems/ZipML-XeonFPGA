@@ -190,7 +190,7 @@ public:
 	uint32_t print_FPGA_memory();
 	uint32_t copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs, char useEncrypted);
 	uint32_t copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs, char useEncrypted);
-	void float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse);
+	void float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse);
 	
 	uint32_t decompress_column(uint32_t* compressedColumn, uint32_t inNumWords, float* decompressedColumn, uint32_t toIntegerScaler);
 	uint32_t compress_column(float* originalColumn, uint32_t inNumWords, uint32_t* compressedColumn, uint32_t toIntegerScaler);
@@ -1554,13 +1554,19 @@ uint32_t scd::copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uin
 	return step_address[0]*numValuesPerLine;
 }
 
-void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse) {
+void scd::float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse) {
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
 	cout << "rest: " << rest << endl;
 
 	uint32_t enableMultiline = 1;
+
+	if (doRealSCD == 1) {
+		residualUpdatePeriod = 0xFFFFFFFF;
+		enableStaleness = 0;
+		numInstancesToUse = 1;
+	}
 
 	uint32_t numMinibatchesAssigned = 0;
 	uint32_t numMinibatchesToAssign[NUM_FINSTANCES];
@@ -1591,7 +1597,11 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 	
 	cout << "Initial loss: " << calculate_loss(x) << endl;
 
-	float tempStepSize = stepSize/(float)minibatchSize;
+	float tempStepSize;
+	if (doRealSCD == 1)
+		tempStepSize = stepSize/(float)numSamples;
+	else
+		tempStepSize = stepSize/(float)minibatchSize;
 	uint32_t* tempStepSizeAddr = (uint32_t*) &tempStepSize;
 
 	uint64_t config[NUM_FINSTANCES][5];
@@ -1614,7 +1624,7 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 		config[n][3] = ((uint64_t)numEpochs << 32) | ((uint64_t)*tempStepSizeAddr);
 
 		config[n][4] = 0;
-		config[n][4] = ((uint64_t)useEncrypted << 19) | ((uint64_t)enableMultiline << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;	
+		config[n][4] = ((uint64_t)doRealSCD << 25) | ((uint64_t)useEncrypted << 19) | ((uint64_t)enableMultiline << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;	
 	}
 	if (useEncrypted == 1) {
 		for (uint32_t i = 0; i < 15; i++) {
@@ -1719,35 +1729,54 @@ void scd::float_linreg_FSCD(float* x_history, uint32_t numEpochs, uint32_t minib
 	cout << "Time for one epoch on the FPGA: " << (end-start)/numEpochs << endl;
 
 	memset(index, 0, NUM_FINSTANCES*sizeof(uint32_t));
-	if (epoch < numEpochs) {
-		for (uint32_t e = epoch; e < numEpochs; e++) {
-			for (uint32_t n = 0; n < numInstancesToUse; n++) {
-				for (uint32_t m = 0; m < numMinibatchesToAssign[n]; m++) {
-					for (uint32_t j = 0; j < numFeatures; j++) {
-						float value = interfaceFPGA->readFromMemoryFloat('i', step_address[n]*numValuesPerLine+index[n]);
-						x[j] -= value;
-						index[n]++;
+	if (doRealSCD == 0) {
+		if (epoch < numEpochs) {
+			for (uint32_t e = epoch; e < numEpochs; e++) {
+				for (uint32_t n = 0; n < numInstancesToUse; n++) {
+					for (uint32_t m = 0; m < numMinibatchesToAssign[n]; m++) {
+						for (uint32_t j = 0; j < numFeatures; j++) {
+							float value = interfaceFPGA->readFromMemoryFloat('i', step_address[n]*numValuesPerLine+index[n]);
+							x[j] -= value;
+							index[n]++;
+						}
+						if (index[n]%numValuesPerLine > 0)
+							index[n] += (numValuesPerLine - index[n]%numValuesPerLine);
 					}
-					if (index[n]%numValuesPerLine > 0)
-						index[n] += (numValuesPerLine - index[n]%numValuesPerLine);
+				}
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					x_history_local[e*numFeatures + j] = x[j]/numMinibatches;
 				}
 			}
-			for (uint32_t j = 0; j < numFeatures; j++) {
-				x_history_local[e*numFeatures + j] = x[j]/numMinibatches;
+		}
+		for(uint32_t e = 0; e < numEpochs; e++) {
+			float* x_end = x_history_local + e*numFeatures;
+			if (x_history != NULL) {
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					x_history[e*numFeatures + j] = x_end[j];
+				}
 			}
+			else
+				cout << "Loss " << e << ": " << calculate_loss(x_end) << endl;
 		}
 	}
-
-	for(uint32_t e = 0; e < numEpochs; e++) {
-		float* x_end = x_history_local + e*numFeatures;
-
-		if (x_history != NULL) {
+	else {
+		uint32_t n = 0;
+		for (uint32_t e = epoch; e < numEpochs; e++) {
 			for (uint32_t j = 0; j < numFeatures; j++) {
-				x_history[e*numFeatures + j] = x_end[j];
+				float value = interfaceFPGA->readFromMemoryFloat('i', step_address[n]*numValuesPerLine+index[n]);
+				x[j] -= value;
+				index[n]++;
 			}
+			if (index[n]%numValuesPerLine > 0)
+				index[n] += (numValuesPerLine - index[n]%numValuesPerLine);
+			if (x_history != NULL) {
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					x_history[e*numFeatures + j] = x[j];
+				}
+			}
+			else
+				cout << "Loss " << e << ": " << calculate_loss(x) << endl;
 		}
-		else
-			cout << "Loss " << e << ": " << calculate_loss(x_end) << endl;
 	}
 
 	free(x_history_local);

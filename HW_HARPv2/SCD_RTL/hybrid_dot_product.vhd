@@ -25,9 +25,10 @@ port (
 	clk : in std_logic;
 	resetn : in std_logic;
 	trigger : in std_logic;
-	accumulation_count : in std_logic_vector(15 downto 0);
+	accumulation_count : in std_logic_vector(31 downto 0);
 	vector1 : in std_logic_vector(32*2**LOG2_VALUES_PER_LINE-1 downto 0);
 	vector2 : in std_logic_vector(32*2**LOG2_VALUES_PER_LINE-1 downto 0);
+	valid_allowed : in std_logic;
 	result_almost_valid : out std_logic;
 	result_valid : out std_logic;
 	result : out std_logic_vector(31 downto 0));
@@ -41,7 +42,7 @@ signal reset : std_logic;
 
 constant CONVERSION_LATENCY : integer := 4;
 
-signal accumulation_count_unsigned : unsigned(15 downto 0);
+signal accumulation_count_unsigned : unsigned(31 downto 0);
 
 signal float_mult_result_almost_valid : std_logic;
 signal float_mult_result_valid : std_logic;
@@ -56,14 +57,17 @@ signal adder_tree_result : std_logic_vector(47 downto 0);
 signal internal_accumulation_count : integer;
 signal accumulation : signed(47 downto 0);
 
-signal valid_pulse_counter : integer;
+signal valid_pulse_counter : unsigned(31 downto 0);
+signal valid_pulse_counter_actual : unsigned(31 downto 0);
 
-signal internal_result_valid : std_logic_vector(CONVERSION_LATENCY downto 0);
+signal internal_result_valid : std_logic_vector(CONVERSION_LATENCY+3 downto 0);
 signal internal_result : signed(47 downto 0);
 
 type float_vector_type is array(15 downto 0) of std_logic_vector(31 downto 0);
 signal vector1_monitor : float_vector_type;
 signal vector2_monitor : float_vector_type;
+
+signal result_valid_internal : std_logic;
 
 component fp_converter48_arria10
     port (
@@ -155,7 +159,8 @@ port map(
 	clk => clk,
 	q => result);
 
-result_almost_valid <= internal_result_valid(CONVERSION_LATENCY-3);
+result_almost_valid <= internal_result_valid(CONVERSION_LATENCY);
+result_valid <= result_valid_internal;
 
 process(clk)
 begin
@@ -170,10 +175,13 @@ if clk'event and clk = '1' then
 	if resetn = '0' then
 		internal_accumulation_count <= 0;
 		accumulation <= (others => '0');
-		valid_pulse_counter <= 0;
+		valid_pulse_counter <= (others => '0');
+		valid_pulse_counter_actual <= (others => '0');
 
 		internal_result_valid <= (others => '0');
 		internal_result <= (others => '0');
+
+		result_valid_internal <= '0';
 	else
 
 		internal_result_valid(0) <= '0';
@@ -189,17 +197,28 @@ if clk'event and clk = '1' then
 			end if;
 		end if;
 
-		result_valid <= '0';
-		if internal_result_valid(CONVERSION_LATENCY-1) = '1' or valid_pulse_counter > 0 then
-			result_valid <= '1';
-			if valid_pulse_counter = accumulation_count_unsigned-1 then
-				valid_pulse_counter <= 0;
-			else
-				valid_pulse_counter <= valid_pulse_counter + 1;
+		if internal_result_valid(CONVERSION_LATENCY+3) = '1' then
+			valid_pulse_counter <= accumulation_count_unsigned-1;
+			valid_pulse_counter_actual <= accumulation_count_unsigned;
+		end if;
+
+		result_valid_internal <= '0';
+		if valid_allowed = '1' and valid_pulse_counter > 0 then
+			result_valid_internal <= '1';
+			if result_valid_internal = '1' then
+				valid_pulse_counter <= valid_pulse_counter - 1;
 			end if;
 		end if;
 
-		for i in 1 to CONVERSION_LATENCY loop
+		if valid_allowed = '1' and result_valid_internal = '1' then
+			valid_pulse_counter_actual <= valid_pulse_counter_actual - 1;
+		end if;
+
+		if valid_pulse_counter = 0 and valid_pulse_counter_actual = 1 and valid_allowed = '0' then
+			valid_pulse_counter <= valid_pulse_counter + 1;
+		end if;
+
+		for i in 1 to CONVERSION_LATENCY+3 loop
 			internal_result_valid(i) <= internal_result_valid(i-1);
 		end loop;
 	end if;

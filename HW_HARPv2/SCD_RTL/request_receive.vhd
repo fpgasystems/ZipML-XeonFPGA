@@ -49,6 +49,10 @@ port (
 	out_index : out std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 
+	allowed_batch_to_read : in std_logic_vector(15 downto 0);
+	allowed_feature_to_read : in std_logic_vector(31 downto 0);
+
+	do_real_scd: in std_logic;
 	do_residual_update : in std_logic;
 	enable_decryption : in std_logic;
 	program_key_index : std_logic_vector(3 downto 0);
@@ -71,6 +75,8 @@ architecture behavioral of request_receive is
 signal iNUMBER_OF_FEATURES : unsigned(LOG2_MAX_NUMFEATURES downto 0) := (others => '0');
 signal iNUMBER_OF_OFFSET_LINES : unsigned(LOG2_MAX_NUMFEATURES-4 downto 0) := (others => '0');
 signal iNUMBER_OF_BATCHES : unsigned(15 downto 0) := (others => '0');
+signal iALLOWED_BATCH_TO_READ : unsigned(15 downto 0) := (others => '0');
+signal iALLOWED_FEATURE_TO_READ : unsigned(LOG2_MAX_NUMFEATURES-1 downto 0) := (others => '0');
 signal iBATCH_SIZE : unsigned(15 downto 0) := (others => '0');
 signal iREAD_SIZE : unsigned(15 downto 0) := (others => '0');
 signal iRECEIVE_SIZE : unsigned(15 downto 0) := (others => '0');
@@ -98,6 +104,7 @@ signal feature_index : unsigned(LOG2_MAX_NUMFEATURES-1 downto 0) := (others => '
 signal feature_index_in_line : integer range 0 to 15;
 signal feature_receive_index : unsigned(LOG2_MAX_NUMFEATURES-1 downto 0) := (others => '0');
 signal batch_index : unsigned(15 downto 0) := (others => '0');
+signal batch_receive_index : unsigned(15 downto 0) := (others => '0');
 signal i_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 signal i_receive_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 
@@ -131,6 +138,9 @@ signal AESDEC_CBC_in_valid : std_logic;
 signal AESDEC_CBC_in_data : std_logic_vector(511 downto 0);
 signal AESDEC_CBC_out_valid : std_logic;
 signal AESDEC_CBC_out_data : std_logic_vector(511 downto 0);
+
+signal scd_phase : std_logic := '0';
+signal scd_receive_phase : std_logic := '0';
 
 component reorder
 generic(
@@ -251,6 +261,8 @@ begin
 if clk'event and clk = '1' then
 	iNUMBER_OF_FEATURES <= unsigned(number_of_features);
 	iNUMBER_OF_BATCHES <= unsigned(number_of_batches);
+	iALLOWED_BATCH_TO_READ <= unsigned(allowed_batch_to_read);
+	iALLOWED_FEATURE_TO_READ <= unsigned(allowed_feature_to_read(LOG2_MAX_NUMFEATURES-1 downto 0));
 	iBATCH_SIZE <= unsigned(batch_size);
 	iBATCH_OFFSET <= batch_index*iBATCH_SIZE;
 	iCOLUMN_SIZE <= iNUMBER_OF_BATCHES*iBATCH_SIZE;
@@ -296,19 +308,26 @@ if clk'event and clk = '1' then
 		feature_index <= (others => '0');
 		feature_receive_index <= (others => '0');
 		batch_index <= (others => '0');
+		batch_receive_index <= (others => '0');
 		i_index <= (others => '0');
 		i_receive_index <= (others => '0');
 
 		new_column_read_allowed <= '1';
 
 		reorder_start_address_adjust <= '0';
+
+		scd_phase <= '0';
+		scd_receive_phase <= '0';
 	else
 
 		-- Request lines
 		read_request <= '0';
 		reorder_start_address_adjust <= '0';
 		column_previous_readsize_we <= '0';
-		if start = '1' and read_request_almostfull = '0' and batch_index <= iNUMBER_OF_BATCHES and new_column_read_allowed = '1'
+		if start = '1' and read_request_almostfull = '0'
+			and batch_index <= iALLOWED_BATCH_TO_READ
+			and feature_index <= iALLOWED_FEATURE_TO_READ
+			and new_column_read_allowed = '1'
 			and NumberOfPendingReads < unsigned(reordered_buffer_free_count)-20
 			and NumberOfPendingReads < unsigned(external_free_count)-20
 		then
@@ -357,7 +376,15 @@ if clk'event and clk = '1' then
 
 				if i_index = iBATCH_SIZE-1 then
 					i_index <= (others => '0');
-					read_state <= B"010";
+					if do_real_scd = '1' then
+						if scd_phase = '1' then
+							read_state <= B"011";
+						else
+							read_state <= B"010";
+						end if;
+					else
+						read_state <= B"010";
+					end if;
 				else
 
 					if (i_index+4) < iBATCH_SIZE-1 and enable_multiline = '1'
@@ -428,23 +455,42 @@ if clk'event and clk = '1' then
 				end if;
 
 				if i_index = iREAD_SIZE-1 then
-					new_column_read_allowed <= enable_staleness;
-					i_index <= (others => '0');	
-					if feature_index = iNUMBER_OF_FEATURES-1 then
-						if do_residual_update = '0' then
-							read_state <= B"001";
-						end if;
-						feature_index <= (others => '0');
-						batch_index <= batch_index + 1;
-					else
-						feature_index <= feature_index + 1;
-					end if;
+					i_index <= (others => '0');
+
 					column_previous_readsize_we <= '1';
+					column_previous_readsize_waddr <= std_logic_vector( feature_index(LOG2_MAX_NUMFEATURES-1 downto 4) );
 					column_previous_readsize_din <= column_previous_readsize_dout;
 					column_previous_readsize_din(feature_index_in_line*32+31 downto feature_index_in_line*32) <= std_logic_vector( unsigned( column_previous_readsize_dout(feature_index_in_line*32+31 downto feature_index_in_line*32) ) + iREAD_SIZE );
-					column_previous_readsize_waddr <= std_logic_vector( feature_index(LOG2_MAX_NUMFEATURES-1 downto 4) );
-				else
+
+					if do_real_scd = '1' then
+						new_column_read_allowed <= '0';
+						read_state <= B"001";
+						if batch_index = iNUMBER_OF_BATCHES-1 then
+							batch_index <= (others => '0');
+							if scd_phase = '1' then
+								scd_phase <= '0';
+								feature_index <= feature_index + 1;
+							else
+								scd_phase <= '1';
+								column_previous_readsize_din(feature_index_in_line*32+31 downto feature_index_in_line*32) <= (others => '0');
+							end if;
+						else
+							batch_index <= batch_index + 1;
+						end if;
+					else
+						new_column_read_allowed <= enable_staleness;
+						if feature_index = iNUMBER_OF_FEATURES-1 then
+							if do_residual_update = '0' then
+								read_state <= B"001";
+							end if;
+							feature_index <= (others => '0');
+							batch_index <= batch_index + 1;
+						else
+							feature_index <= feature_index + 1;
+						end if;
+					end if;
 					
+				else
 					if signed(i_index+4) < signed(iREAD_SIZE-1) and enable_multiline = '1'
 						and i_index(1 downto 0) = B"00"
 						and column_offset_intermediate(1 downto 0) = B"00" then
@@ -463,7 +509,6 @@ if clk'event and clk = '1' then
 						read_request_length <= B"00";
 						i_index <= i_index + 1;
 					end if;
-
 				end if;
 			end if;
 		end if;
@@ -506,7 +551,15 @@ if clk'event and clk = '1' then
 				out_residual_valid <= '1';
 				if i_receive_index = iBATCH_SIZE-1 then
 					i_receive_index <= (others => '0');
-					receive_state <= B"010";
+					if do_real_scd = '1' then
+						if scd_receive_phase = '1' then
+							receive_state <= B"011";
+						else
+							receive_state <= B"010";
+						end if;
+					else
+						receive_state <= B"010";
+					end if;
 				else
 					i_receive_index <= i_receive_index + 1;
 				end if;
@@ -536,15 +589,37 @@ if clk'event and clk = '1' then
 				end if;
 
 				if i_receive_index = iRECEIVE_SIZE-1 then
-					new_column_read_allowed <= '1';
 					i_receive_index <= (others => '0');
-					if feature_receive_index = iNUMBER_OF_FEATURES-1 then
-						if do_residual_update = '0' then
-							receive_state <= B"001";
+
+					if do_real_scd = '1' then
+						new_column_read_allowed <= '1';
+						receive_state <= B"001";
+						if batch_receive_index = iNUMBER_OF_BATCHES-1 then
+							batch_receive_index <= (others => '0');
+							if scd_receive_phase = '1' then
+								scd_receive_phase <= '0';
+								if feature_receive_index = iNUMBER_OF_FEATURES-1 then
+									feature_receive_index <= (others => '0');
+								else
+									feature_receive_index <= feature_receive_index + 1;
+								end if;
+							else
+								scd_receive_phase <= '1';
+							end if;
+						else
+							batch_receive_index <= batch_receive_index + 1;
 						end if;
-						feature_receive_index <= (others => '0');
 					else
-						feature_receive_index <= feature_receive_index + 1;
+						new_column_read_allowed <= '1';
+						if feature_receive_index = iNUMBER_OF_FEATURES-1 then
+							if do_residual_update = '0' then
+								receive_state <= B"001";
+							end if;
+							feature_receive_index <= (others => '0');
+							batch_receive_index <= batch_receive_index + 1;
+						else
+							feature_receive_index <= feature_receive_index + 1;
+						end if;
 					end if;
 				else
 					i_receive_index <= i_receive_index + 1;

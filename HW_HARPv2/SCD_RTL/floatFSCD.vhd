@@ -47,6 +47,7 @@ port(
 	start : in std_logic;
 	done : out std_logic;
 
+	do_real_scd: in std_logic;
 	do_residual_update : in std_logic;
 	enable_multiline : in std_logic;
 	enable_decompression : in std_logic;
@@ -98,15 +99,19 @@ signal NumberOfPendingWrites : unsigned(31 downto 0) := (others => '0');
 signal NumberOfWriteResponses : unsigned(31 downto 0) := (others => '0');
 
 signal i_receive_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
+signal i_batch_index : unsigned(15 downto 0) := (others => '0');
 signal i_model_index : unsigned(LOG2_MAX_NUMFEATURES-1 downto 0) := (others => '0');
 signal feature_update_index : unsigned(31 downto 0) := (others => '0');
+signal batch_update_index : unsigned(15 downto 0) := (others => '0');
 signal write_batch_index : unsigned(15 downto 0) := (others => '0');
+signal write_feature_index : unsigned(31 downto 0) := (others => '0');
 signal i_write_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 signal i_update_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 signal i_writeback_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 signal i_writerequest_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 
 signal allowed_batch_to_read : std_logic_vector(15 downto 0);
+signal allowed_feature_to_read : std_logic_vector(31 downto 0);
 signal write_residual_back : std_logic;
 
 signal epoch_start : std_logic;
@@ -167,10 +172,7 @@ signal a_fifo_re : std_logic;
 signal a_fifo_valid : std_logic;
 signal a_fifo_dout : std_logic_vector(511 downto 0);
 signal a_fifo_count : std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
-signal a_fifo_empty : std_logic;
-signal a_fifo_full : std_logic;
 signal a_fifo_almostfull: std_logic;
-signal a_fifo_free_count : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0);
 
 signal scalar_vector_mult_valid : std_logic;
 signal scalar_vector_mult_scalar : std_logic_vector(31 downto 0);
@@ -182,10 +184,9 @@ signal residual_minus_b_valid : std_logic;
 signal residual_minus_b : std_logic_vector(511 downto 0);
 
 signal dot_almost_valid : std_logic;
+signal dot_almost_valid_1d : std_logic;
+signal dot_almost_valid_2d : std_logic;
 signal dot_valid : std_logic;
-signal dot_valid_1d : std_logic;
-signal dot_valid_2d : std_logic;
-signal dot_valid_3dn : std_logic;
 signal dot : std_logic_vector(31 downto 0);
 signal step : std_logic_vector(31 downto 0);
 signal step_valid : std_logic;
@@ -204,6 +205,8 @@ signal step_writeback_valid : std_logic;
 signal step_writeback : std_logic_vector(511 downto 0);
 signal step_writeback_index : integer range 0 to 15 := 0;
 
+signal scd_phase : std_logic := '0';
+
 component simple_dual_port_ram_single_clock
 generic(
 	DATA_WIDTH : natural := 8;
@@ -217,24 +220,23 @@ port(
 	q		: out std_logic_vector((DATA_WIDTH -1) downto 0));
 end component;
 
-component fifo
-generic(
-	FIFO_WIDTH : integer := 32;
-	FIFO_DEPTH_BITS : integer := 8;
-	FIFO_ALMOSTFULL_THRESHOLD : integer := 220);
-port(
-	clk :		in std_logic;
-	resetn :	in std_logic;
+component normal2axis_fifo
+generic (
+	FIFO_WIDTH : integer;
+	LOG2_FIFO_DEPTH : integer);
+ port(
+	clk : in std_logic;
+	resetn : in std_logic;
 
-	we :		in std_logic;
-	din :		in std_logic_vector(FIFO_WIDTH-1 downto 0);	
-	re :		in std_logic;
-	valid :		out std_logic;
-	dout :		out std_logic_vector(FIFO_WIDTH-1 downto 0);
-	count :		out std_logic_vector(FIFO_DEPTH_BITS-1 downto 0);
-	empty :		out std_logic;
-	full :		out std_logic;
-	almostfull: out std_logic);
+	write_enable : in std_logic;
+	write_data : in std_logic_vector(FIFO_WIDTH-1 downto 0);
+	
+	m_axis_tvalid : out std_logic;
+	m_axis_tready : in std_logic;
+	m_axis_tdata : out std_logic_vector(FIFO_WIDTH-1 downto 0);
+
+	almostfull : out std_logic;
+	count : out std_logic_vector(LOG2_FIFO_DEPTH-1 downto 0) );
 end component;
 
 component request_receive
@@ -267,6 +269,10 @@ port (
 	out_index : out std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 
+	allowed_batch_to_read : in std_logic_vector(15 downto 0);
+	allowed_feature_to_read : in std_logic_vector(31 downto 0);
+
+	do_real_scd: in std_logic;
 	do_residual_update : in std_logic;
 	enable_decryption : in std_logic;
 	program_key_index : std_logic_vector(3 downto 0);
@@ -311,6 +317,8 @@ port (
 	result : out std_logic_vector(32*VALUES_PER_LINE-1 downto 0));
 end component;
 
+signal dot_product_accumulation_count : std_logic_vector(31 downto 0);
+signal dot_valid_allowed : std_logic;
 component hybrid_dot_product
 generic (
 	LOG2_VALUES_PER_LINE : integer := 5);
@@ -318,9 +326,10 @@ port (
 	clk : in std_logic;
 	resetn : in std_logic;
 	trigger : in std_logic;
-	accumulation_count : in std_logic_vector(15 downto 0);
+	accumulation_count : in std_logic_vector(31 downto 0);
 	vector1 : in std_logic_vector(511 downto 0);
 	vector2 : in std_logic_vector(511 downto 0);
+	valid_allowed : in std_logic;
 	result_almost_valid : out std_logic;
 	result_valid : out std_logic;
 	result : out std_logic_vector(31 downto 0));
@@ -357,7 +366,8 @@ new_residual0 <= new_residual(31 downto 0);
 
 reset <= not resetn_internal;
 
-allowed_batch_to_read <= std_logic_vector(write_batch_index);
+allowed_batch_to_read <= number_of_batches when do_real_scd = '1' else std_logic_vector(write_batch_index);
+allowed_feature_to_read <= std_logic_vector(write_feature_index) when do_real_scd = '1' else number_of_features;
 request_receive_lines: request_receive
 generic map (
 	ADDRESS_WIDTH => ADDRESS_WIDTH,
@@ -389,6 +399,10 @@ port map (
 	out_index => response_index,
 	out_data => response_data,
 
+	allowed_batch_to_read => allowed_batch_to_read,
+	allowed_feature_to_read => allowed_feature_to_read,
+
+	do_real_scd => do_real_scd,
 	do_residual_update => do_residual_update,
 	enable_decryption => enable_decryption,
 	program_key_index => program_key_index,
@@ -402,7 +416,7 @@ port map (
 	step_address => step_address,
 	residual_address => residual_address,
 	number_of_features => number_of_features(15 downto 0),
-	number_of_batches => allowed_batch_to_read,
+	number_of_batches => number_of_batches,
 	batch_size => batch_size);
 
 decompressor_in_valid <= response_a_valid when enable_decompression = '1' else '0';
@@ -469,24 +483,23 @@ port map (
 	q => model_store_dout);
 
 a_fifo_re <= dot_valid;
-a_fifo: fifo
+a_fifo: normal2axis_fifo
 generic map (
 	FIFO_WIDTH => 512,
-	FIFO_DEPTH_BITS => LOG2_MAX_iBATCHSIZE,
-	FIFO_ALMOSTFULL_THRESHOLD => 2**LOG2_MAX_iBATCHSIZE-30)
+	LOG2_FIFO_DEPTH => LOG2_MAX_iBATCHSIZE)
 port map (
 	clk => clk,
 	resetn => resetn_internal,
 
-	we => a_fifo_we,
-	din => a_fifo_din,
-	re => a_fifo_re,
-	valid => a_fifo_valid,
-	dout => a_fifo_dout,
-	count => a_fifo_count,
-	empty => a_fifo_empty,
-	full => a_fifo_full,
-	almostfull => a_fifo_almostfull);
+	write_enable => a_fifo_we,
+	write_data => a_fifo_din,
+
+	m_axis_tready => a_fifo_re,
+	m_axis_tvalid => a_fifo_valid,
+	m_axis_tdata => a_fifo_dout,
+
+	almostfull => a_fifo_almostfull,
+	count => a_fifo_count);
 
 COMP_residual_minus_b: float_vector_subtract
 generic map (
@@ -501,6 +514,8 @@ port map (
 	result_valid => residual_minus_b_valid,
 	result => residual_minus_b);
 
+dot_product_accumulation_count <= std_logic_vector(unsigned(batch_size)*unsigned(number_of_batches)) when do_real_scd = '1' else X"0000" & batch_size;
+dot_valid_allowed <= a_fifo_valid;
 COMP_dot: hybrid_dot_product
 generic map (
 	LOG2_VALUES_PER_LINE => LOG2_VALUES_PER_LINE)
@@ -508,9 +523,10 @@ port map (
 	clk => clk,
 	resetn => resetn_internal,
 	trigger => residual_minus_b_valid,
-	accumulation_count => batch_size,
+	accumulation_count => dot_product_accumulation_count,
 	vector1 => residual_minus_b,
 	vector2 => input_vector(INPUT_VECTOR_DELAY_CYCLES),
+	valid_allowed => dot_valid_allowed,
 	result_almost_valid => dot_almost_valid,
 	result_valid => dot_valid,
 	result => dot);
@@ -523,7 +539,7 @@ port map (
 	clk => clk,
 	q => step);
 
-scalar_vector_mult_valid <= model_store_re_1d when do_residual_update = '1' else a_fifo_valid;
+scalar_vector_mult_valid <= model_store_re_1d when do_residual_update = '1' else (a_fifo_valid and a_fifo_re);
 scalar_vector_mult_scalar <= (not model_store_dout( 32*i_model_mux_1d + 31 ) & model_store_dout( 32*i_model_mux_1d + 30 downto 32*i_model_mux_1d )) when do_residual_update = '1' else step;
 scalar_vector_mult_vector <= input_vector(1) when do_residual_update = '1' else a_fifo_dout;
 COMP_scalar_vector_mult: float_scalar_vector_mult
@@ -564,10 +580,9 @@ if clk'event and clk = '1' then
 		input_vector(k) <= input_vector(k-1);
 	end loop;
 	residual_minus_b_trigger <= residual_store_re and b_store_re;
-	dot_valid_1d <= dot_valid;
-	dot_valid_2d <= dot_valid_1d;
-	dot_valid_3dn <= not dot_valid_2d;
-	step_valid <= dot_valid_3dn and dot_valid_2d;
+	dot_almost_valid_1d <= dot_almost_valid;
+	dot_almost_valid_2d <= dot_almost_valid_1d;
+	step_valid <= dot_almost_valid_2d;
 
 	iNUMBER_OF_EPOCHS <= unsigned(number_of_epochs);
 	iNUMBER_OF_FEATURES <= unsigned(number_of_features);
@@ -598,9 +613,12 @@ if clk'event and clk = '1' then
 		NumberOfWriteResponses <= (others => '0');
 
 		i_receive_index <= (others => '0');
+		i_batch_index <= (others => '0');
 		i_model_index <= (others => '0');
 		feature_update_index <= (others => '0');
+		batch_update_index <= (others => '0');
 		write_batch_index <= (others => '0');
+		write_feature_index <= (others => '0');
 		i_write_index <= (others => '0');
 		i_update_index <= (others => '0');
 		i_writeback_index <= (others => '0');
@@ -613,6 +631,8 @@ if clk'event and clk = '1' then
 		step_writeback_valid <= '0';
 		step_writeback <= (others => '0');
 		step_writeback_index <= 0;
+
+		scd_phase <= '0';
 	else
 		
 		-- Receive lines
@@ -658,20 +678,41 @@ if clk'event and clk = '1' then
 				model_store_raddr <= std_logic_vector(i_model_index(LOG2_MAX_NUMFEATURES-1 downto 4));
 				i_model_mux <= to_integer(i_model_index(3 downto 0));
 			else
-				a_fifo_we <= '1';
-				a_fifo_din <= a_data;
-				residual_store_re <= '1';
-				b_store_re <= '1';
-				residual_store_raddr <= std_logic_vector(i_receive_index);
-				b_store_raddr <= std_logic_vector(i_receive_index);
+				if do_real_scd = '1' then
+					if scd_phase = '1' then
+						a_fifo_we <= '1';
+						a_fifo_din <= a_data;
+					else
+						residual_store_re <= '1';
+						b_store_re <= '1';
+						residual_store_raddr <= std_logic_vector(i_receive_index);
+						b_store_raddr <= std_logic_vector(i_receive_index);
+					end if;
+				else
+					a_fifo_we <= '1';
+					a_fifo_din <= a_data;
+					residual_store_re <= '1';
+					b_store_re <= '1';
+					residual_store_raddr <= std_logic_vector(i_receive_index);
+					b_store_raddr <= std_logic_vector(i_receive_index);
+				end if;
 			end if;
 
 			if i_receive_index = iBATCH_SIZE-1 then
 				i_receive_index <= (others => '0');
-				if i_model_index = iNUMBER_OF_FEATURES-1 then
-					i_model_index <= (others => '0');
+				if do_real_scd = '1' then
+					if i_batch_index = iNUMBER_OF_BATCHES-1 then
+						i_batch_index <= (others => '0');
+						scd_phase <= not scd_phase;
+					else
+						i_batch_index <= i_batch_index + 1;
+					end if;
 				else
-					i_model_index <= i_model_index + 1;
+					if i_model_index = iNUMBER_OF_FEATURES-1 then
+						i_model_index <= (others => '0');
+					else
+						i_model_index <= i_model_index + 1;
+					end if;
 				end if;
 			else
 				i_receive_index <= i_receive_index + 1;
@@ -706,14 +747,32 @@ if clk'event and clk = '1' then
 
 			if i_update_index = iBATCH_SIZE-1 then
 				i_update_index <= (others => '0');
-				if feature_update_index = iNUMBER_OF_FEATURES-1 then
-					feature_update_index <= (others => '0');
+
+				if do_real_scd = '1' then
 					write_residual_back <= '1';
-					if unsigned(iNUMBER_OF_FEATURES(3 downto 0)) > 0 then
-						step_writeback_valid <= '1';
+					if batch_update_index = iNUMBER_OF_BATCHES-1 then
+						batch_update_index <= (others => '0');
+						if feature_update_index = iNUMBER_OF_FEATURES-1 then
+							feature_update_index <= (others => '0');
+							if unsigned(iNUMBER_OF_FEATURES(3 downto 0)) > 0 then
+								step_writeback_valid <= '1';
+							end if;
+						else
+							feature_update_index <= feature_update_index + 1;
+						end if;
+					else
+						batch_update_index <= batch_update_index + 1;
 					end if;
 				else
-					feature_update_index <= feature_update_index + 1;
+					if feature_update_index = iNUMBER_OF_FEATURES-1 then
+						feature_update_index <= (others => '0');
+						write_residual_back <= '1';
+						if unsigned(iNUMBER_OF_FEATURES(3 downto 0)) > 0 then
+							step_writeback_valid <= '1';
+						end if;
+					else
+						feature_update_index <= feature_update_index + 1;
+					end if;
 				end if;
 			else
 				i_update_index <= i_update_index + 1;
@@ -752,7 +811,16 @@ if clk'event and clk = '1' then
 
 			if i_writerequest_index = iBATCH_SIZE-1 then
 				i_writerequest_index <= (others => '0');
-				finish_allowed <= '1';
+				if do_real_scd = '1' then
+					if write_batch_index = iNUMBER_OF_BATCHES-1 then
+						write_batch_index <= (others => '0');
+						finish_allowed <= '1';
+					else
+						write_batch_index <= write_batch_index + 1;
+					end if;
+				else
+					finish_allowed <= '1';
+				end if;
 			else
 				i_writerequest_index <= i_writerequest_index + 1;
 			end if;
@@ -786,18 +854,31 @@ if clk'event and clk = '1' then
 		if finish_allowed = '1' and NumberOfWriteResponses = (residual_NumberOfWriteRequests+step_NumberOfWriteRequests) and NumberOfWriteResponses > 0 then
 			finish_allowed <= '0';
 
-			if write_batch_index = iNUMBER_OF_BATCHES-1 then
-				write_batch_index <= (others => '0');
-				if completed_epochs = iNUMBER_OF_EPOCHS-1 then
-					done <= '1';
+			if do_real_scd = '1' then
+				if write_feature_index = iNUMBER_OF_FEATURES-1 then
+					write_feature_index <= (others => '0');
+					if completed_epochs = iNUMBER_OF_EPOCHS-1 then
+						done <= '1';
+					else
+						epoch_start <= '1';
+					end if;
+					completed_epochs <= completed_epochs + 1;
 				else
-					epoch_start <= '1';
+					write_feature_index <= write_feature_index + 1;
 				end if;
-				completed_epochs <= completed_epochs + 1;
 			else
-				write_batch_index <= write_batch_index + 1;
+				if write_batch_index = iNUMBER_OF_BATCHES-1 then
+					write_batch_index <= (others => '0');
+					if completed_epochs = iNUMBER_OF_EPOCHS-1 then
+						done <= '1';
+					else
+						epoch_start <= '1';
+					end if;
+					completed_epochs <= completed_epochs + 1;
+				else
+					write_batch_index <= write_batch_index + 1;
+				end if;
 			end if;
-
 		end if;
 
 
