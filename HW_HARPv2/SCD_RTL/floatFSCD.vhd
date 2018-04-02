@@ -98,6 +98,7 @@ signal NumberOfWriteRequests : unsigned(31 downto 0) := (others => '0');
 signal NumberOfPendingWrites : unsigned(31 downto 0) := (others => '0');
 signal NumberOfWriteResponses : unsigned(31 downto 0) := (others => '0');
 
+signal i_residual_receive_index : unsigned(31 downto 0) := (others => '0');
 signal i_receive_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
 signal i_batch_index : unsigned(15 downto 0) := (others => '0');
 signal i_model_index : unsigned(LOG2_MAX_NUMFEATURES-1 downto 0) := (others => '0');
@@ -120,7 +121,7 @@ signal response_residual_valid : std_logic;
 signal response_model_valid : std_logic;
 signal response_b_valid : std_logic;
 signal response_a_valid : std_logic;
-signal response_index : std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
+signal response_index : std_logic_vector(31 downto 0);
 signal response_data : std_logic_vector(511 downto 0);
 signal a_data : std_logic_vector(511 downto 0);
 
@@ -171,7 +172,7 @@ signal a_fifo_din : std_logic_vector(511 downto 0);
 signal a_fifo_re : std_logic;
 signal a_fifo_valid : std_logic;
 signal a_fifo_dout : std_logic_vector(511 downto 0);
-signal a_fifo_count : std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
+signal a_fifo_count : std_logic_vector(LOG2_MAX_iBATCHSIZE downto 0);
 signal a_fifo_almostfull: std_logic;
 
 signal scalar_vector_mult_valid : std_logic;
@@ -206,6 +207,7 @@ signal step_writeback : std_logic_vector(511 downto 0);
 signal step_writeback_index : integer range 0 to 15 := 0;
 
 signal scd_phase : std_logic := '0';
+signal scd_residual_phase : std_logic := '0'; 
 
 component simple_dual_port_ram_single_clock
 generic(
@@ -266,7 +268,7 @@ port (
 	out_model_valid : out std_logic;
 	out_b_valid : out std_logic;
 	out_a_valid : out std_logic;
-	out_index : out std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
+	out_index : out std_logic_vector(31 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 
 	allowed_batch_to_read : in std_logic_vector(15 downto 0);
@@ -415,7 +417,7 @@ port map (
 	b_address => b_address,
 	step_address => step_address,
 	residual_address => residual_address,
-	number_of_features => number_of_features(15 downto 0),
+	number_of_features => number_of_features(LOG2_MAX_NUMFEATURES downto 0),
 	number_of_batches => number_of_batches,
 	batch_size => batch_size);
 
@@ -486,7 +488,7 @@ a_fifo_re <= dot_valid;
 a_fifo: normal2axis_fifo
 generic map (
 	FIFO_WIDTH => 512,
-	LOG2_FIFO_DEPTH => LOG2_MAX_iBATCHSIZE)
+	LOG2_FIFO_DEPTH => LOG2_MAX_iBATCHSIZE+1)
 port map (
 	clk => clk,
 	resetn => resetn_internal,
@@ -612,6 +614,7 @@ if clk'event and clk = '1' then
 		step_NumberOfWriteRequests <= (others => '0');
 		NumberOfWriteResponses <= (others => '0');
 
+		i_residual_receive_index <= (others => '0');
 		i_receive_index <= (others => '0');
 		i_batch_index <= (others => '0');
 		i_model_index <= (others => '0');
@@ -633,19 +636,31 @@ if clk'event and clk = '1' then
 		step_writeback_index <= 0;
 
 		scd_phase <= '0';
+		scd_residual_phase <= '0';
 	else
 		
 		-- Receive lines
 		residual_store_we <= '0';
 		residual_store_loading_we <= '0';
 		if response_residual_valid = '1' then
-			residual_store_we <= '1';
+			if not (do_real_scd = '1' and scd_residual_phase = '1') then
+				residual_store_we <= '1';
+			end if;
 			residual_store_loading_we <= '1';
 			residual_store_din <= response_data;
 			residual_store_loading_din <= response_data;
-			residual_store_waddr <= std_logic_vector(response_index);
-			residual_store_loading_waddr <= std_logic_vector(response_index);
+			residual_store_waddr <= std_logic_vector(response_index(LOG2_MAX_iBATCHSIZE-1 downto 0));
+			residual_store_loading_waddr <= std_logic_vector(response_index(LOG2_MAX_iBATCHSIZE-1 downto 0));
 			residual_NumberOfReceivedReads <= residual_NumberOfReceivedReads + 1;
+
+			if i_residual_receive_index = iNUMBER_OF_BATCHES*iBATCH_SIZE-1 then
+				i_residual_receive_index <= (others => '0');
+				if do_real_scd = '1' then
+					scd_residual_phase <= not scd_residual_phase;
+				end if;
+			else
+				i_residual_receive_index <= i_residual_receive_index + 1;
+			end if;
 		end if;
 
 
@@ -653,7 +668,7 @@ if clk'event and clk = '1' then
 		if response_b_valid = '1' then
 			b_store_we <= '1';
 			b_store_din <= response_data;
-			b_store_waddr <= std_logic_vector(response_index);
+			b_store_waddr <= std_logic_vector(response_index(LOG2_MAX_iBATCHSIZE-1 downto 0));
 			b_NumberOfReceivedReads <= b_NumberOfReceivedReads + 1;
 		end if;
 
@@ -662,7 +677,7 @@ if clk'event and clk = '1' then
 		if response_model_valid = '1' then
 			model_store_we <= '1';
 			model_store_din <= response_data;
-			model_store_waddr <= std_logic_vector(response_index);
+			model_store_waddr <= std_logic_vector(response_index(LOG2_MAX_NUMFEATURES-4-1 downto 0));
 		end if;
 
 

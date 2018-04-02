@@ -326,8 +326,8 @@ done <= parti_done when unsigned(number_of_batches) > 0 else
 FSCD: floatFSCD
 generic map (
 	ADDRESS_WIDTH => ADDRESS_WIDTH,
-	LOG2_MAX_iBATCHSIZE => 11,
-	LOG2_MAX_NUMFEATURES => 15)
+	LOG2_MAX_iBATCHSIZE => 10,
+	LOG2_MAX_NUMFEATURES => 12)
 port map (
 	clk => clk_200,
 	resetn => resetn,

@@ -46,7 +46,7 @@ port (
 	out_model_valid : out std_logic;
 	out_b_valid : out std_logic;
 	out_a_valid : out std_logic;
-	out_index : out std_logic_vector(LOG2_MAX_iBATCHSIZE-1 downto 0);
+	out_index : out std_logic_vector(31 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 
 	allowed_batch_to_read : in std_logic_vector(15 downto 0);
@@ -105,10 +105,11 @@ signal feature_index_in_line : integer range 0 to 15;
 signal feature_receive_index : unsigned(LOG2_MAX_NUMFEATURES-1 downto 0) := (others => '0');
 signal batch_index : unsigned(15 downto 0) := (others => '0');
 signal batch_receive_index : unsigned(15 downto 0) := (others => '0');
-signal i_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
-signal i_receive_index : unsigned(LOG2_MAX_iBATCHSIZE-1 downto 0) := (others => '0');
+signal i_index : unsigned(15 downto 0) := (others => '0');
+signal i_receive_index : unsigned(31 downto 0) := (others => '0');
 
 signal new_column_read_allowed : std_logic;
+signal new_column_read_allowed_pending : std_logic_vector(70 downto 0) := (others => '0');
 
 signal column_offset_intermediate : unsigned(31 downto 0);
 
@@ -513,6 +514,7 @@ if clk'event and clk = '1' then
 			end if;
 		end if;
 
+		new_column_read_allowed_pending(0) <= '0';
 		-- Receive lines
 		column_offset_we <= '0';
 		out_residual_valid <= '0';
@@ -590,9 +592,13 @@ if clk'event and clk = '1' then
 
 				if i_receive_index = iRECEIVE_SIZE-1 then
 					i_receive_index <= (others => '0');
+					if do_real_scd = '1' and enable_decryption = '1' then
+						new_column_read_allowed_pending(0) <= '1';
+					else
+						new_column_read_allowed <= '1';
+					end if;
 
 					if do_real_scd = '1' then
-						new_column_read_allowed <= '1';
 						receive_state <= B"001";
 						if batch_receive_index = iNUMBER_OF_BATCHES-1 then
 							batch_receive_index <= (others => '0');
@@ -610,7 +616,6 @@ if clk'event and clk = '1' then
 							batch_receive_index <= batch_receive_index + 1;
 						end if;
 					else
-						new_column_read_allowed <= '1';
 						if feature_receive_index = iNUMBER_OF_FEATURES-1 then
 							if do_residual_update = '0' then
 								receive_state <= B"001";
@@ -628,6 +633,14 @@ if clk'event and clk = '1' then
 				a_NumberOfReceivedReads <= a_NumberOfReceivedReads + 1;
 			end if;
 		end if;
+
+
+		if new_column_read_allowed_pending(70) = '1' then
+			new_column_read_allowed <= '1';
+		end if;
+		for i in 1 to 70 loop
+			new_column_read_allowed_pending(i) <= new_column_read_allowed_pending(i-1);
+		end loop;
 
 	end if;
 end if;

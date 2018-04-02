@@ -14,14 +14,14 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #*************************************************************************
 
-CPPFLAGS	= -O3 -std=c++11 -march=native -Wall -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-reorder
+CPPFLAGS	= -O3 -std=c++11 -march=native -Wall -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-reorder -g
 CXX			= g++
 LDFLAGS		= -lpthread -lOSAL -lAAS
 
 all: scd_test # sgd_test zipml
 
-scd_test: ./tests/scd_test.cpp ./src/scd.h
-	$(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/scd_test.cpp -o scd_test -L$(AALSDK)/lib $(LDFLAGS) -laalrt
+scd_test: ./tests/scd_test.cpp ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp ./src/scd.h
+	$(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/scd_test.cpp ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp -o scd_test -L$(AALSDK)/lib $(LDFLAGS) -laalrt
 
 sgd_test: ./tests/sgd_test.cpp ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp ./src/zipml_sgd.h
 	$(CXX) -D HARPv1 -I$(AALSDK)/include $(CPPFLAGS) ./tests/sgd_test.cpp ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp -o sgd_test -L$(AALSDK)/lib $(LDFLAGS) -lxlrt

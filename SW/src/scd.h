@@ -741,10 +741,10 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 						temp_time2 = get_time();
 						dot_product_time += (temp_time2-temp_time1);
 
-						// cout << "gradient: " << gradient << endl;
+						cout << "gradient: " << gradient << endl;
 						float step = stepSize*(gradient/minibatchSize);
 						x[m*numFeatures + j] -= step;
-						// cout << "step : " << step << endl;
+						cout << "step : " << step << endl;
 
 						for (uint32_t i = 0; i < minibatchSize; i++) {
 							residual[m*minibatchSize + i] -= step*transformedColumn2[i];
@@ -1624,17 +1624,18 @@ void scd::float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs
 		config[n][3] = ((uint64_t)numEpochs << 32) | ((uint64_t)*tempStepSizeAddr);
 
 		config[n][4] = 0;
-		config[n][4] = ((uint64_t)doRealSCD << 25) | ((uint64_t)useEncrypted << 19) | ((uint64_t)enableMultiline << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;	
+		config[n][4] = ((uint64_t)doRealSCD << 25) | ((uint64_t)15 << 20) | ((uint64_t)useEncrypted << 19) | ((uint64_t)enableMultiline << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;	
 	}
 	if (useEncrypted == 1) {
+		uint64_t temp = 0;
 		for (uint32_t i = 0; i < 15; i++) {
-			uint64_t config6 = ((uint64_t)i << 20) | config[0][4];
-			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, config6);
+			uint64_t temp = ((uint64_t)i << 20);
+			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp);
 			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG6, ((uint64_t*)KEYS_dec)[2*i]);
 			interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG7, ((uint64_t*)KEYS_dec)[2*i+1]);
 		}
-		uint64_t config7 = ((uint64_t)15 << 20) | config[0][4];
-		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, config7);
+		temp = ((uint64_t)15 << 20);
+		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp);
 		uint64_t* temp_ptr = (uint64_t*)ivec;
 		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG6, temp_ptr[0]);
 		interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG7, temp_ptr[1]);
