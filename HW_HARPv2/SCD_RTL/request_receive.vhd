@@ -591,9 +591,6 @@ if clk'event and clk = '1' then
 
 				if i_receive_index = iRECEIVE_SIZE-1 then
 					i_receive_index <= (others => '0');
-					if do_real_scd = '0' then
-						new_column_read_allowed <= '1';
-					end if;
 
 					if do_real_scd = '1' then
 						receive_state <= B"001";
@@ -631,7 +628,7 @@ if clk'event and clk = '1' then
 			end if;
 		end if;
 
-		if do_real_scd = '1' and allowed_new_column_read = '1' then
+		if allowed_new_column_read = '1' then
 			new_column_read_allowed <= '1';
 		end if;
 

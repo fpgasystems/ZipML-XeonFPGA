@@ -42,11 +42,8 @@ int main(int argc, char* argv[]) {
 	uint32_t numTestSamples;
 	uint32_t numFeatures;
 	uint32_t miniBatchSize = 512;
-	uint32_t numInstances = 1;
-	uint32_t useEncryption = 0;
-	uint32_t useCompression = 0;
-	if (argc != 10) {
-		cout << "Usage: ./app <pathToDataset> <pathToTestDataset> <numSamples> <numTestSamples> <numFeatures> <miniBatchSize> <f_instances> <encrypt> <compress>" << endl;
+	if (argc != 7) {
+		cout << "Usage: ./app <pathToDataset> <pathToTestDataset> <numSamples> <numTestSamples> <numFeatures> <miniBatchSize>" << endl;
 		return 0;
 	}
 	else {
@@ -56,14 +53,11 @@ int main(int argc, char* argv[]) {
 		numTestSamples = atoi(argv[4]);
 		numFeatures = atoi(argv[5]);
 		miniBatchSize = atoi(argv[6]);
-		numInstances = atoi(argv[7]);
-		useEncryption = atoi(argv[8]);
-		useCompression = atoi(argv[9]);
 	}
 
-	uint32_t SGD_stepSizeShifter = 2;
+	uint32_t SGD_stepSizeShifter = 3;
 	uint32_t SCD_stepSizeShifter = 2;
-	uint32_t numEpochs = 3;
+	uint32_t numEpochs = 10;
 	uint32_t numMinibatchesAtATime = 1;
 	float lambda = 0.0005;
 
@@ -74,15 +68,15 @@ int main(int argc, char* argv[]) {
 	float a_min[scd_app.numFeatures];
 	float a_range[scd_app.numFeatures];
 	scd_app.a_normalize(0, 'c', a_min, a_range);
-	uint32_t numPositive = scd_app.b_normalize(0, 1, 1.0);
+	uint32_t numPositive = scd_app.b_normalize(0, 0, 0.0);
 	cout << "numPositive: " << numPositive << " out of " << scd_app.numSamples << endl;
 
 	scd_app.print_samples(3);
 
 
-	uint32_t numModels = 10;
+	uint32_t numModels = 30;
 	float xM[numModels*scd_app.numFeatures];
-	scd_app.gentleAdaBoost(xM, numModels, numEpochs, miniBatchSize, 1.0/(1 << SGD_stepSizeShifter), lambda);
+	scd_app.AdaBoost(xM, numModels, numEpochs, miniBatchSize, 1.0/(1 << SGD_stepSizeShifter), lambda);
 
 	// scd_app.float_logreg_SGD(x_history, numEpochs, miniBatchSize,  1.0/(1 << SGD_stepSizeShifter), lambda);
 

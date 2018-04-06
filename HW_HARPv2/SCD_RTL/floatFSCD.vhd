@@ -739,6 +739,7 @@ if clk'event and clk = '1' then
 					else
 						i_model_index <= i_model_index + 1;
 					end if;
+					allowed_new_column_read <= '1';
 				end if;
 			else
 				i_receive_index <= i_receive_index + 1;

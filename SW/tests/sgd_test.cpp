@@ -39,10 +39,11 @@ int main(int argc, char* argv[]) {
 	// Do SGD
 	zipml_sgd sgd_app(0, VALUE_TO_INT_SCALER, NUM_VALUES_PER_LINE);
 
-	sgd_app.load_libsvm_data(pathToDataset, numSamples, numFeatures);
+	// sgd_app.load_libsvm_data(pathToDataset, numSamples, numFeatures);
+	// sgd_app.a_normalize(0, 'c');
+	// sgd_app.b_normalize(0, 0, 0.0);
 
-	sgd_app.a_normalize(0, 'c');
-	sgd_app.b_normalize(0, 0, 0.0);
+	scd_app.generate_synthetic_data(numSamples, numFeatures, 0);
 
 	sgd_app.print_samples(1);
 

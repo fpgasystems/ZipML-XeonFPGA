@@ -66,7 +66,7 @@ end selector_cross;
 architecture behavioral of selector_cross is
 
 constant REQUEST_FIFO_DEPTH_BITS : integer := 8;
-constant RESPONSE_FIFO_DEPTH_BITS : integer := REQUEST_FIFO_DEPTH_BITS+2;
+constant RESPONSE_FIFO_DEPTH_BITS : integer := REQUEST_FIFO_DEPTH_BITS+1;
 
 signal resetn_200 : std_logic;
 signal start_200 : std_logic;

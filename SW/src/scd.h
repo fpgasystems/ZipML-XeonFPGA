@@ -177,7 +177,7 @@ public:
 	void encrypt_a(uint32_t minibatchSize, char useCompressed);
 
 	float calculate_l2svm_loss(float* x, float costPos, float costNeg, float lambda);
-	float calculate_logreg_loss(float* x, float lambda);
+	float calculate_logreg_loss(float* x, float lambda, float* sampleWeights);
 	float calculate_linreg_loss(float* x);
 	uint32_t calculate_logreg_accuracy(float* x);
 	uint32_t calculate_accuracy(float* x, float decisionBoundary, int trueLabel, int falseLabel);
@@ -200,8 +200,8 @@ public:
 	}
 
 	void float_l2svm_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float costPos, float costNeg, float lambda);
-	void gentleAdaBoost(float* xM, uint32_t numModels, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda);
-	void float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda);
+	void AdaBoost(float* xM, uint32_t numModels, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda);
+	void float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda, float* sampleWeights);
 	void float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float* sampleWeights);
 	void float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 	void float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, uint32_t residualUpdatePeriod, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
@@ -636,60 +636,77 @@ void scd::float_l2svm_SGD(float* x_history, uint32_t numEpochs, uint32_t minibat
 	free(gradient);
 }
 
-void scd::gentleAdaBoost(float* xM, uint32_t numModels, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda) {
+static float fm(float* xM, uint32_t M, uint32_t numFeatures, float** a, uint32_t sampleIndex) {
+	float F = 0;
+	
+	float dot = 0;
+	for (uint32_t j = 0; j < numFeatures; j++) {
+		dot += xM[M*numFeatures + j]*a[j][sampleIndex];
+	}
+	float prediction = 1/(1+exp(-dot));
+	
+	return 0.5*log(prediction/(1-prediction));
+}
+
+void scd::AdaBoost(float* xM, uint32_t numModels, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda) {
 
 	float* sampleWeights = (float*)aligned_alloc(64, numSamples*sizeof(float));
+
 	for (uint32_t i = 0; i < numSamples; i++) {
-		sampleWeights[i] = 1.0/numSamples;
+		sampleWeights[i] = 1.0/(float)numSamples;
+		sampleWeights[i] = 1.0;
 	}
 
 	for (uint32_t M = 0; M < numModels; M++) {
-
+		
 		float x_history[numEpochs*numFeatures];
-		float_linreg_SGD(x_history, numEpochs, minibatchSize, stepSize, sampleWeights);
+		float_logreg_SGD(x_history, numEpochs, minibatchSize, stepSize, lambda, sampleWeights);
 		for (uint32_t j = 0; j < numFeatures; j++) {
 			xM[M*numFeatures + j] = x_history[(numEpochs-1)*numFeatures + j];
 		}
 
-		// Update sampleWeights
 		float sum = 0;
 		for (uint32_t i = 0; i < numSamples; i++) {
-			float dot = 0;
-			for (uint32_t j = 0; j < numFeatures; j++) {
-				dot += xM[M*numFeatures + j]*a[j][i];
-			}
-			sampleWeights[i] = sampleWeights[i]*exp( -b[i]*dot );
+			float temp = fm(xM, M, numFeatures, a, i);
+			if (b[i] == 1.0)
+				sampleWeights[i] *= exp(-temp);
+			else
+				sampleWeights[i] *= exp(temp);
 			sum += sampleWeights[i];
 		}
-		// Normalize sampleWeights
 		for (uint32_t i = 0; i < numSamples; i++) {
-			sampleWeights[i] = numSamples*(sampleWeights[i]/sum);
+			sampleWeights[i] = numSamples*sampleWeights[i]/sum;
 		}
 
 		uint32_t corrects = 0;
 		for (uint32_t i = 0; i < numSamples; i++) {
-			float dot = 0;
-			for (uint32_t m = 0; m < M+1; m++) {
-				for (uint32_t j = 0; j < numFeatures; j++) {
-					dot += xM[m*numFeatures + j]*a[j][i];
-				}
+			float temp = 0;
+			for (uint32_t k = 0; k < M+1; k++) {
+				temp += fm(xM, k, numFeatures, a, i);
 			}
-			if ((dot > 0 && b[i] == 1.0) || (dot < 0 && b[i] == -1))
+			if ((temp < 0 && b[i] == 0) || (temp > 0 && b[i] == 1))
 				corrects++;
+
+			// if (i < 25) {
+			// 	cout << "sampleWeights[i]: " << sampleWeights[i] << endl;
+			// 	cout << "prediction " << i << ": " << temp << endl;
+			// }
 		}
+
+		// cout << "Boost error: " << boostError << endl;
 		cout << "Boost accuracy: " << corrects << " corrects out of " << numSamples << endl;
 	}
 	
 	free(sampleWeights);
 }
 
-void scd::float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda) {
+void scd::float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda, float* sampleWeights) {
 	float* x = (float*)aligned_alloc(64, numFeatures*sizeof(float));
 	memset(x, 0, numFeatures*sizeof(float));
 	float* gradient = (float*)aligned_alloc(64, numFeatures*sizeof(float));
 	memset(gradient, 0, numFeatures*sizeof(float));
 
-	cout << "Initial loss: " << calculate_logreg_loss(x, lambda) << endl;
+	cout << "Initial loss: " << calculate_logreg_loss(x, lambda, sampleWeights) << endl;
 	cout << "Initial accuracy: " << calculate_logreg_accuracy(x) << " corrects out of " << numSamples << endl;
 
 	uint32_t numMinibatches = numSamples/minibatchSize;
@@ -709,7 +726,10 @@ void scd::float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 					dot += x[j]*a[j][m*minibatchSize + i];
 				}
 				for (uint32_t j = 0; j < numFeatures; j++) {
-					gradient[j] += ((1/(1+exp(-dot))) - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
+					if (sampleWeights != NULL)
+						gradient[j] += sampleWeights[m*minibatchSize + i]*((1/(1+exp(-dot))) - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
+					else
+						gradient[j] += ((1/(1+exp(-dot))) - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
 				}
 			}
 			for (uint32_t j = 0; j < numFeatures; j++) {
@@ -727,7 +747,7 @@ void scd::float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 			}
 		}
 		
-		cout << "Loss " << epoch << ": " << calculate_logreg_loss(x, lambda) << endl;
+		cout << "Loss " << epoch << ": " << calculate_logreg_loss(x, lambda, sampleWeights) << endl;
 		uint32_t accuracy = calculate_logreg_accuracy(x);
 		cout << accuracy << " corrects out of " << numSamples << endl;
 
@@ -810,7 +830,7 @@ void scd::float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 	float* x_end = (float*)aligned_alloc(64, numFeatures*sizeof(float));
 	memset(x_end, 0, numFeatures*sizeof(float));
 	
-	cout << "Initial loss: " << calculate_logreg_loss(x_end, lambda) << endl;
+	cout << "Initial loss: " << calculate_logreg_loss(x_end, lambda, NULL) << endl;
 	cout << "Initial accuracy: " << calculate_logreg_accuracy(x_end) << " corrects out of " << numSamples << endl;
 
 	float* transformedColumn1 = NULL;
@@ -935,7 +955,7 @@ void scd::float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 					x_history[epoch*numFeatures + j] = x_end[j];
 				}
 			}
-			cout << "Loss " << epoch << ": " << calculate_logreg_loss(x_end, lambda) << endl;
+			cout << "Loss " << epoch << ": " << calculate_logreg_loss(x_end, lambda, NULL) << endl;
 			cout << calculate_logreg_accuracy(x_end) << " corrects out of " << numSamples << endl;
 
 			cout << epoch << endl;
@@ -2202,7 +2222,7 @@ float scd::calculate_l2svm_loss(float* x, float costPos, float costNeg, float la
 	return loss;
 }
 
-float scd::calculate_logreg_loss(float* x, float lambda) {
+float scd::calculate_logreg_loss(float* x, float lambda, float* sampleWeights) {
 	float loss = 0;
 	for(uint32_t i = 0; i < numSamples; i++) {
 		float dot = 0.0;
@@ -2211,13 +2231,14 @@ float scd::calculate_logreg_loss(float* x, float lambda) {
 		}
 		float prediction = 1/(1+exp(-dot));
 
-		loss += b[i]*log(prediction) + (1-b[i])*log(1 - prediction);	
+		if (sampleWeights != NULL)
+			loss += sampleWeights[i]*(b[i]*log(prediction) + (1-b[i])*log(1 - prediction));
+		else
+			loss += b[i]*log(prediction) + (1-b[i])*log(1 - prediction);	
 	}
 
 	loss /= (float)numSamples;
 	loss = -loss;
-
-	cout << "loss: " << loss << endl;
 
 	float regularizer = 0;
 	for (uint32_t j = 0; j < numFeatures; j++) {
