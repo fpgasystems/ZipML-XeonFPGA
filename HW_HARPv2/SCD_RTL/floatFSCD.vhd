@@ -69,8 +69,8 @@ end floatFSCD;
 
 architecture behavioral of floatFSCD is
 
-signal timeout_occured : std_logic;
-signal timeout : unsigned(31 downto 0);
+--signal timeout_occured : std_logic;
+--signal timeout : unsigned(31 downto 0);
 signal resetn_internal : std_logic;
 signal reset : std_logic;
 constant LOG2_VALUE_WIDTH : integer := 5;
@@ -82,6 +82,7 @@ signal iNUMBER_OF_EPOCHS : unsigned(15 downto 0) := (others => '0');
 signal iNUMBER_OF_FEATURES : unsigned(31 downto 0) := (others => '0');
 signal iNUMBER_OF_BATCHES : unsigned(15 downto 0) := (others => '0');
 signal iBATCH_SIZE : unsigned(15 downto 0) := (others => '0');
+signal iNUMBER_OF_BATCHES_TIMES_BATCH_SIZE : unsigned(31 downto 0) := (others => '0');
 signal write_iBATCH_OFFSET : unsigned(31 downto 0) := (others => '0');
 
 signal finish_allowed : std_logic;
@@ -209,6 +210,8 @@ signal step_writeback_index : integer range 0 to 15 := 0;
 signal scd_phase : std_logic := '0';
 signal scd_residual_phase : std_logic := '0'; 
 
+signal allowed_new_column_read : std_logic := '0';
+
 component simple_dual_port_ram_single_clock
 generic(
 	DATA_WIDTH : natural := 8;
@@ -271,6 +274,7 @@ port (
 	out_index : out std_logic_vector(31 downto 0);
 	out_data : out std_logic_vector(511 downto 0);
 
+	allowed_new_column_read : in std_logic;
 	allowed_batch_to_read : in std_logic_vector(15 downto 0);
 	allowed_feature_to_read : in std_logic_vector(31 downto 0);
 
@@ -401,6 +405,7 @@ port map (
 	out_index => response_index,
 	out_data => response_data,
 
+	allowed_new_column_read => allowed_new_column_read,
 	allowed_batch_to_read => allowed_batch_to_read,
 	allowed_feature_to_read => allowed_feature_to_read,
 
@@ -590,14 +595,15 @@ if clk'event and clk = '1' then
 	iNUMBER_OF_FEATURES <= unsigned(number_of_features);
 	iNUMBER_OF_BATCHES <= unsigned(number_of_batches);
 	iBATCH_SIZE <= unsigned(batch_size);
+	iNUMBER_OF_BATCHES_TIMES_BATCH_SIZE <= iNUMBER_OF_BATCHES*iBATCH_SIZE;
 	write_iBATCH_OFFSET <= write_batch_index*iBATCH_SIZE;
 
 	model_store_re_1d <= model_store_re;
 	i_model_mux_1d <= i_model_mux;
 
 	if resetn_internal = '0' then
-		timeout_occured <= '0';
-		timeout <= (others => '0');
+		--timeout_occured <= '0';
+		--timeout <= (others => '0');
 
 		write_request <= '0';
 		done <= '0';
@@ -637,8 +643,9 @@ if clk'event and clk = '1' then
 
 		scd_phase <= '0';
 		scd_residual_phase <= '0';
+
+		allowed_new_column_read <= '0';
 	else
-		
 		-- Receive lines
 		residual_store_we <= '0';
 		residual_store_loading_we <= '0';
@@ -653,7 +660,7 @@ if clk'event and clk = '1' then
 			residual_store_loading_waddr <= std_logic_vector(response_index(LOG2_MAX_iBATCHSIZE-1 downto 0));
 			residual_NumberOfReceivedReads <= residual_NumberOfReceivedReads + 1;
 
-			if i_residual_receive_index = iNUMBER_OF_BATCHES*iBATCH_SIZE-1 then
+			if i_residual_receive_index = iNUMBER_OF_BATCHES_TIMES_BATCH_SIZE-1 then
 				i_residual_receive_index <= (others => '0');
 				if do_real_scd = '1' then
 					scd_residual_phase <= not scd_residual_phase;
@@ -681,6 +688,7 @@ if clk'event and clk = '1' then
 		end if;
 
 
+		allowed_new_column_read <= '0';
 		residual_store_re <= '0';
 		b_store_re <= '0';
 		model_store_re <= '0';
@@ -721,6 +729,9 @@ if clk'event and clk = '1' then
 						scd_phase <= not scd_phase;
 					else
 						i_batch_index <= i_batch_index + 1;
+					end if;
+					if scd_phase = '0' then
+						allowed_new_column_read <= '1';
 					end if;
 				else
 					if i_model_index = iNUMBER_OF_FEATURES-1 then
@@ -803,6 +814,9 @@ if clk'event and clk = '1' then
 			if i_writeback_index = iBATCH_SIZE-1 then
 				i_writeback_index <= (others => '0');
 				write_residual_back <= '0';
+				if do_real_scd = '1' then
+					allowed_new_column_read <= '1';
+				end if;
 			else
 				i_writeback_index <= i_writeback_index + 1;
 			end if;
@@ -897,34 +911,34 @@ if clk'event and clk = '1' then
 		end if;
 
 
-		if response_residual_valid = '1' and response_a_valid = '1' then
-			timeout <= (others => '0');
-		else
-			timeout <= timeout + 1;
-		end if;
-		if timeout > X"BEBC200" and timeout_occured = '0' then
-		--if timeout > X"4000" and timeout_occured = '0' then -- Use during simulation
-			NumberOfWriteResponses <= (others => '0');
-			timeout_occured <= '1';
-			write_request <= '1';
-			write_request_address <= (others => '0');
-			write_request_data(415 downto 0) <= 	B"000" & X"00000" & std_logic_vector(decompressor_out_fifo_free_count) &
-													X"0000" & std_logic_vector(write_batch_index) &
-													std_logic_vector(feature_update_index) &
-													std_logic_vector(reorder_free_count) &
-													X"0000" & std_logic_vector(completed_epochs) &
-													std_logic_vector(NumberOfWriteResponses) &
-													std_logic_vector(step_NumberOfWriteRequests) &
-													std_logic_vector(residual_NumberOfWriteRequests) &
-													std_logic_vector(a_NumberOfReceivedReads) &
-													std_logic_vector(b_NumberOfReceivedReads) &
-													std_logic_vector(residual_NumberOfReceivedReads) &
-													std_logic_vector(NumberOfReceivedReads) &
-													NumberOfRequestedReads;
-		end if;
-		if timeout_occured = '1' and NumberOfWriteResponses = 1 then
-			done <= '1';
-		end if;
+		--if response_residual_valid = '1' and response_a_valid = '1' then
+		--	timeout <= (others => '0');
+		--else
+		--	timeout <= timeout + 1;
+		--end if;
+		--if timeout > X"BEBC200" and timeout_occured = '0' then
+		----if timeout > X"4000" and timeout_occured = '0' then -- Use during simulation
+		--	NumberOfWriteResponses <= (others => '0');
+		--	timeout_occured <= '1';
+		--	write_request <= '1';
+		--	write_request_address <= (others => '0');
+		--	write_request_data(415 downto 0) <= 	B"000" & X"00000" & std_logic_vector(decompressor_out_fifo_free_count) &
+		--											X"0000" & std_logic_vector(write_batch_index) &
+		--											std_logic_vector(feature_update_index) &
+		--											std_logic_vector(reorder_free_count) &
+		--											X"0000" & std_logic_vector(completed_epochs) &
+		--											std_logic_vector(NumberOfWriteResponses) &
+		--											std_logic_vector(step_NumberOfWriteRequests) &
+		--											std_logic_vector(residual_NumberOfWriteRequests) &
+		--											std_logic_vector(a_NumberOfReceivedReads) &
+		--											std_logic_vector(b_NumberOfReceivedReads) &
+		--											std_logic_vector(residual_NumberOfReceivedReads) &
+		--											std_logic_vector(NumberOfReceivedReads) &
+		--											NumberOfRequestedReads;
+		--end if;
+		--if timeout_occured = '1' and NumberOfWriteResponses = 1 then
+		--	done <= '1';
+		--end if;
 
 	end if;
 end if;

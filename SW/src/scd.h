@@ -20,7 +20,7 @@
 using namespace std;
 
 #define NUM_THREADS 14
-#define NUM_FINSTANCES 4
+#define NUM_FINSTANCES 3
 
 class scd {
 
@@ -167,19 +167,43 @@ public:
 
 	// Data loading functions
 	void load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures);
-	void load_raw_data(char* path_to_file, uint32_t _numSamples, uint32_t _numFeatures);
+	void load_raw_data(char* path_to_file, uint32_t _numSamples, uint32_t _numFeatures, char labelPresent);
 	void generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, char binary);
 
 	// Normalization and data shaping
-	void a_normalize(char toMinus1_1, char rowOrColumnWise);
-	void b_normalize(char toMinus1_1, char binarize_b, float b_toBinarizeTo);
+	void a_normalize(char toMinus1_1, char rowOrColumnWise, float* a_min, float* a_range);
+	uint32_t b_normalize(char toMinus1_1, char binarize_b, float b_toBinarizeTo);
 	float compress_a(uint32_t minibatchSize, uint32_t toIntegerScaler);
 	void encrypt_a(uint32_t minibatchSize, char useCompressed);
 
-	float calculate_loss(float* x);
-	uint32_t calculate_accuracy(float* x);
+	float calculate_l2svm_loss(float* x, float costPos, float costNeg, float lambda);
+	float calculate_logreg_loss(float* x, float lambda);
+	float calculate_linreg_loss(float* x);
+	uint32_t calculate_logreg_accuracy(float* x);
+	uint32_t calculate_accuracy(float* x, float decisionBoundary, int trueLabel, int falseLabel);
+	void write_logreg_predictions(float* x, float* a_min, float* a_range) {
+		ofstream ofs ("predictions.txt", ofstream::out);
+		for(uint32_t i = 0; i < numSamples; i++) {
+			float dot = x[0]*a[0][i]; // Bias term
+			for (uint32_t j = 1; j < numFeatures; j++) {
+				dot += x[j]*((a[j][i] - a_min[j])/a_range[j]);
+			}
+			float prediction = 1/(1+exp(-dot));
+			if (i < 50)
+				cout << prediction << endl;
+			if (prediction >= 0.5)
+				ofs << 1 << endl;
+			else
+				ofs << 0 << endl;
+		}
+		ofs.close();
+	}
 
-	void float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize);
+	void float_l2svm_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float costPos, float costNeg, float lambda);
+	void gentleAdaBoost(float* xM, uint32_t numModels, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda);
+	void float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda);
+	void float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float* sampleWeights);
+	void float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 	void float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, uint32_t residualUpdatePeriod, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 #ifdef AVX2
 	void AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
@@ -263,11 +287,11 @@ void scd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _num
 	cout << "numFeatures: " << numFeatures << endl;
 }
 
-void scd::load_raw_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures) {
+void scd::load_raw_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures, char labelPresent) {
 	cout << "Reading " << pathToFile << endl;
 
 	numSamples = _numSamples;
-	numFeatures = _numFeatures;
+	numFeatures = _numFeatures+1;
 
 	if (a != NULL)
 		free(a);
@@ -286,14 +310,34 @@ void scd::load_raw_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFea
 	}
 
 	double* temp;
-	temp = (double*)malloc(numSamples*(numFeatures+1)*sizeof(double));
-	size_t readsize = fread(temp, sizeof(double), numSamples*(numFeatures+1), f);
-	for (uint32_t i = 0; i < numSamples; i++) {
-		b[i] = (float)temp[i*(numFeatures+1)];
-		for (uint32_t j = 0; j < numFeatures; j++) {
-			a[j][i] = (float)temp[i*(numFeatures+1) + j + 1];
+	
+	uint32_t numFeaturesWithoutBias = numFeatures-1;
+
+	if (labelPresent == 1) {
+		temp = (double*)malloc(numSamples*(numFeaturesWithoutBias+1)*sizeof(double));
+		size_t readsize = fread(temp, sizeof(double), numSamples*(numFeaturesWithoutBias+1), f);
+		for (uint32_t i = 0; i < numSamples; i++) {
+			b[i] = (float)temp[i*(numFeaturesWithoutBias+1)];
+			for (uint32_t j = 0; j < numFeaturesWithoutBias; j++) {
+				a[j+1][i] = (float)temp[i*(numFeaturesWithoutBias+1) + j + 1];
+			}
 		}
 	}
+	else {
+		temp = (double*)malloc(numSamples*numFeaturesWithoutBias*sizeof(double));
+		size_t readsize = fread(temp, sizeof(double), numSamples*numFeaturesWithoutBias, f);
+		for (uint32_t i = 0; i < numSamples; i++) {
+			b[i] = 0;
+			for (uint32_t j = 0; j < numFeaturesWithoutBias; j++) {
+				a[j+1][i] = (float)temp[i*numFeaturesWithoutBias + j];
+			}
+		}
+	}
+
+	for (uint32_t i = 0; i < numSamples; i++) { // Bias term
+		a[0][i] = 1.0;
+	}
+
 	free(temp);
 	fclose(f);
 
@@ -344,8 +388,9 @@ void scd::generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, c
 }
 
 
-void scd::a_normalize(char toMinus1_1, char rowOrColumnWise) {
+void scd::a_normalize(char toMinus1_1, char rowOrColumnWise, float* a_min, float* a_range) {
 	a_normalizedToMinus1_1 = toMinus1_1;
+
 	if (rowOrColumnWise == 'r') {
 		for (uint32_t i = 0; i < numSamples; i++) {
 			float amin = numeric_limits<float>::max();
@@ -370,6 +415,10 @@ void scd::a_normalize(char toMinus1_1, char rowOrColumnWise) {
 					}
 				}
 			}
+			if (a_min != NULL)
+				a_min[i] = amin;
+			if (a_range != NULL)
+				a_range[i] = arange;
 		}
 	}
 	else {
@@ -396,11 +445,17 @@ void scd::a_normalize(char toMinus1_1, char rowOrColumnWise) {
 					}
 				}
 			}
+			if (a_min != NULL)
+				a_min[j] = amin;
+			if (a_range != NULL)
+				a_range[j] = arange;
 		}
 	}
+
 }
 
-void scd::b_normalize(char toMinus1_1, char binarize_b, float b_toBinarizeTo) {
+uint32_t scd::b_normalize(char toMinus1_1, char binarize_b, float b_toBinarizeTo) {
+	uint32_t numPositive = 0;
 	b_normalizedToMinus1_1 = toMinus1_1;
 	if (binarize_b == 0) {
 		float bmin = numeric_limits<float>::max();
@@ -430,14 +485,17 @@ void scd::b_normalize(char toMinus1_1, char binarize_b, float b_toBinarizeTo) {
 	}
 	else {
 		for (uint32_t i = 0; i < numSamples; i++) {
-			if(b[i] == b_toBinarizeTo)
+			if(b[i] == b_toBinarizeTo) {
+				numPositive++;
 				b[i] = 1.0;
+			}
 			else
 				b[i] = -1.0;
 		}
 		b_min = -1.0;
 		b_range = 2.0;
 	}
+	return numPositive;
 }
 
 float scd::compress_a(uint32_t minibatchSize, uint32_t toIntegerScaler) {
@@ -516,13 +574,123 @@ static void shuffle(uint32_t* indexes, uint32_t size) {
 	}
 }
 
-void scd::float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize) {
+void scd::float_l2svm_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float costPos, float costNeg, float lambda) {
 	float* x = (float*)aligned_alloc(64, numFeatures*sizeof(float));
 	memset(x, 0, numFeatures*sizeof(float));
 	float* gradient = (float*)aligned_alloc(64, numFeatures*sizeof(float));
 	memset(gradient, 0, numFeatures*sizeof(float));
 
-	cout << "Initial loss: " << calculate_loss(x) << endl;
+	cout << "Initial loss: " << calculate_l2svm_loss(x, costPos, costNeg, lambda) << endl;
+	cout << "Initial accuracy: " << calculate_accuracy(x, 0, 1, -1) << " corrects out of " << numSamples << endl;
+
+	uint32_t numMinibatches = numSamples/minibatchSize;
+	cout << "numMinibatches: " << numMinibatches << endl;
+	uint32_t rest = numSamples - numMinibatches*minibatchSize;
+	cout << "rest: " << rest << endl;
+
+	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
+
+		double start = get_time();
+
+		for (uint32_t k = 0; k < numMinibatches; k++) {
+			uint32_t m = numMinibatches*((float)(rand()-1)/(float)RAND_MAX);
+			for (uint32_t i = 0; i < minibatchSize; i++) {
+				float dot = 0;
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					dot += x[j]*a[j][m*minibatchSize + i];
+				}
+
+				float temp = 1 - b[m*minibatchSize + i]*dot;
+				if (temp > 0) {
+					for (uint32_t j = 0; j < numFeatures; j++) {
+						if (b[m*minibatchSize + i] > 0)
+							gradient[j] += costPos*(dot - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
+						else
+							gradient[j] += costNeg*(dot - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
+					}
+				}
+			}
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x[j] -= stepSize*(gradient[j]/minibatchSize + lambda*x[j]);
+				gradient[j] = 0.0;
+			}
+		}
+
+		double end = get_time();
+		cout << "Time for one epoch: " << end-start << endl;
+
+		if (x_history != NULL) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_history[epoch*numFeatures + j] = x[j];
+			}
+		}
+		else {
+			cout << "Loss " << epoch << ": " << calculate_l2svm_loss(x, costPos, costNeg, lambda) << endl;
+			cout << calculate_accuracy(x, 0, 1, -1) << " corrects out of " << numSamples << endl;
+		}
+
+		cout << epoch << endl;
+	}
+
+	free(x);
+	free(gradient);
+}
+
+void scd::gentleAdaBoost(float* xM, uint32_t numModels, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda) {
+
+	float* sampleWeights = (float*)aligned_alloc(64, numSamples*sizeof(float));
+	for (uint32_t i = 0; i < numSamples; i++) {
+		sampleWeights[i] = 1.0/numSamples;
+	}
+
+	for (uint32_t M = 0; M < numModels; M++) {
+
+		float x_history[numEpochs*numFeatures];
+		float_linreg_SGD(x_history, numEpochs, minibatchSize, stepSize, sampleWeights);
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			xM[M*numFeatures + j] = x_history[(numEpochs-1)*numFeatures + j];
+		}
+
+		// Update sampleWeights
+		float sum = 0;
+		for (uint32_t i = 0; i < numSamples; i++) {
+			float dot = 0;
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				dot += xM[M*numFeatures + j]*a[j][i];
+			}
+			sampleWeights[i] = sampleWeights[i]*exp( -b[i]*dot );
+			sum += sampleWeights[i];
+		}
+		// Normalize sampleWeights
+		for (uint32_t i = 0; i < numSamples; i++) {
+			sampleWeights[i] = numSamples*(sampleWeights[i]/sum);
+		}
+
+		uint32_t corrects = 0;
+		for (uint32_t i = 0; i < numSamples; i++) {
+			float dot = 0;
+			for (uint32_t m = 0; m < M+1; m++) {
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					dot += xM[m*numFeatures + j]*a[j][i];
+				}
+			}
+			if ((dot > 0 && b[i] == 1.0) || (dot < 0 && b[i] == -1))
+				corrects++;
+		}
+		cout << "Boost accuracy: " << corrects << " corrects out of " << numSamples << endl;
+	}
+	
+	free(sampleWeights);
+}
+
+void scd::float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda) {
+	float* x = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(x, 0, numFeatures*sizeof(float));
+	float* gradient = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(gradient, 0, numFeatures*sizeof(float));
+
+	cout << "Initial loss: " << calculate_logreg_loss(x, lambda) << endl;
+	cout << "Initial accuracy: " << calculate_logreg_accuracy(x) << " corrects out of " << numSamples << endl;
 
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
@@ -541,7 +709,65 @@ void scd::float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 					dot += x[j]*a[j][m*minibatchSize + i];
 				}
 				for (uint32_t j = 0; j < numFeatures; j++) {
-					gradient[j] += (dot - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
+					gradient[j] += ((1/(1+exp(-dot))) - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
+				}
+			}
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x[j] -= (stepSize/(epoch+1))*(gradient[j]/minibatchSize + (lambda/minibatchSize)*x[j]);
+				gradient[j] = 0.0;
+			}
+		}
+
+		double end = get_time();
+		cout << "Time for one epoch: " << end-start << endl;
+
+		if (x_history != NULL) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_history[epoch*numFeatures + j] = x[j];
+			}
+		}
+		
+		cout << "Loss " << epoch << ": " << calculate_logreg_loss(x, lambda) << endl;
+		uint32_t accuracy = calculate_logreg_accuracy(x);
+		cout << accuracy << " corrects out of " << numSamples << endl;
+
+		cout << epoch << endl;
+	}
+
+	free(x);
+	free(gradient);
+}
+
+void scd::float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float* sampleWeights) {
+	float* x = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(x, 0, numFeatures*sizeof(float));
+	float* gradient = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(gradient, 0, numFeatures*sizeof(float));
+
+	cout << "Initial loss: " << calculate_linreg_loss(x) << endl;
+	cout << "Initial accuracy: " << calculate_accuracy(x, 0, 1, -1) << " corrects out of " << numSamples << endl;
+
+	uint32_t numMinibatches = numSamples/minibatchSize;
+	cout << "numMinibatches: " << numMinibatches << endl;
+	uint32_t rest = numSamples - numMinibatches*minibatchSize;
+	cout << "rest: " << rest << endl;
+
+	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
+
+		double start = get_time();
+
+		for (uint32_t k = 0; k < numMinibatches; k++) {
+			uint32_t m = numMinibatches*((float)(rand()-1)/(float)RAND_MAX);
+			for (uint32_t i = 0; i < minibatchSize; i++) {
+				float dot = 0;
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					dot += x[j]*a[j][m*minibatchSize + i];
+				}
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					if (sampleWeights != NULL)
+						gradient[j] += sampleWeights[m*minibatchSize + i]*(dot - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
+					else
+						gradient[j] += (dot - b[m*minibatchSize + i])*a[j][m*minibatchSize + i];
 				}
 			}
 			for (uint32_t j = 0; j < numFeatures; j++) {
@@ -558,14 +784,174 @@ void scd::float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 				x_history[epoch*numFeatures + j] = x[j];
 			}
 		}
-		else
-			cout << "Loss " << epoch << ": " << calculate_loss(x) << endl;
+		
+		cout << "Loss " << epoch << ": " << calculate_linreg_loss(x) << endl;
+		cout << calculate_accuracy(x, 0, 1, -1) << " corrects out of " << numSamples << endl;
 
 		cout << epoch << endl;
 	}
 
 	free(x);
 	free(gradient);
+}
+
+void scd::float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler) {
+	float* residual = (float*)aligned_alloc(64, numSamples*sizeof(float));
+	memset(residual, 0, numSamples*sizeof(float));
+
+	cout << "---------------------------------------" << endl;
+	uint32_t numMinibatches = numSamples/minibatchSize;
+	cout << "numMinibatches: " << numMinibatches << endl;
+	uint32_t rest = numSamples - numMinibatches*minibatchSize;
+	cout << "rest: " << rest << endl;
+
+	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	float* x_end = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(x_end, 0, numFeatures*sizeof(float));
+	
+	cout << "Initial loss: " << calculate_logreg_loss(x_end, lambda) << endl;
+	cout << "Initial accuracy: " << calculate_logreg_accuracy(x_end) << " corrects out of " << numSamples << endl;
+
+	float* transformedColumn1 = NULL;
+	float* transformedColumn2 = NULL;
+	if (useEncrypted == 1 && useCompressed == 1) {
+		transformedColumn1 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	}
+	else {
+		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	}
+
+	for(uint32_t epoch = 0; epoch < numEpochs + (numEpochs/residualUpdatePeriod); epoch++) {
+
+		double decryption_time = 0;
+		double decompression_time = 0;
+		double dot_product_time = 0;
+		double residual_update_time = 0;
+		double temp_time1, temp_time2, temp_time3;
+		double start = get_time();
+
+		for (uint32_t m = 0; m < numMinibatches; m++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+
+				if (useEncrypted == 1 && useCompressed == 1) {
+					int32_t compressed_a_offset = 0;
+					if (m > 0)
+						compressed_a_offset = compressed_a_sizes[j][m-1];
+
+					temp_time1 = get_time();
+					decrypt_column(encrypted_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn1);
+					temp_time2 = get_time();
+					decryption_time += (temp_time2-temp_time1);
+					decompress_column((uint32_t*)transformedColumn1, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
+					temp_time3 = get_time();
+					decompression_time += (temp_time3-temp_time2);
+				}
+				else if (useEncrypted == 1) {
+					temp_time1 = get_time();
+					decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn2);
+					temp_time2 = get_time();
+					decryption_time += (temp_time2-temp_time1);
+				}
+				else if (useCompressed == 1) {
+					temp_time1 = get_time();
+					int32_t compressed_a_offset = 0;
+					if (m > 0)
+						compressed_a_offset = compressed_a_sizes[j][m-1];
+					decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
+					temp_time2 = get_time();
+					decompression_time += (temp_time2-temp_time1);
+				}
+				else {
+					transformedColumn2 = a[j] + m*minibatchSize;
+				}
+
+				if ( (epoch+1)%(residualUpdatePeriod+1) == 0 ) {
+					for (uint32_t i = 0; i < minibatchSize; i++) {
+						if (j == 0)
+							residual[m*minibatchSize + i] = x_end[j]*transformedColumn2[i];
+						else
+							residual[m*minibatchSize + i] += x_end[j]*transformedColumn2[i];
+					}
+				}
+				else {
+					temp_time1 = get_time();
+					float gradient = 0;
+					for (uint32_t i = 0; i < minibatchSize; i++) {
+						gradient += (1/(1+exp(-residual[m*minibatchSize + i])) - b[m*minibatchSize + i])*transformedColumn2[i];
+					}
+					temp_time2 = get_time();
+					dot_product_time += (temp_time2-temp_time1);
+
+					// cout << "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" << endl;
+					// cout << "gradient: " << gradient << endl;
+					float step = stepSize*((gradient + lambda)/minibatchSize); 
+					// if (step < x[m*numFeatures + j])
+					// 	step = x[m*numFeatures + j];
+					x[m*numFeatures + j] -= step;
+					// cout << "step : " << step << endl;
+
+					for (uint32_t i = 0; i < minibatchSize; i++) {
+						residual[m*minibatchSize + i] -= step*transformedColumn2[i];
+						// if (i % 16 == 0) {
+						// 	cout << "delta: " << step*transformedColumn2[i] << endl;
+						// 	cout << "residual: " << residual[m*minibatchSize + i] << endl;
+						// }
+					}
+					temp_time3 = get_time();
+					residual_update_time += (temp_time3-temp_time2);
+				}
+			}
+		}
+
+		if ( (epoch+1)%(residualUpdatePeriod+1) == 0 ) {
+			cout << "--> PERFORMED RESIDUAL UPDATE !!!" << endl;
+		}
+		else {
+			temp_time1 = get_time();
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_end[j] = 0;
+			}
+			for (uint32_t m = 0; m < numMinibatches; m++) {
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					x_end[j] += x[m*numFeatures + j];
+				}
+			}
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_end[j] = x_end[j]/numMinibatches;
+			}
+
+			double end = get_time();
+			cout << "decryption_time: " << decryption_time << endl;
+			cout << "decompression_time: " << decompression_time << endl;
+			cout << "dot_product_time: " << dot_product_time << endl;
+			cout << "residual_update_time: " << residual_update_time << endl;
+			cout << "x_average_time: " << end-temp_time1 << endl;
+			cout << "Time for one epoch: " << end-start << endl;
+
+			if (x_history != NULL) {
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					x_history[epoch*numFeatures + j] = x_end[j];
+				}
+			}
+			cout << "Loss " << epoch << ": " << calculate_logreg_loss(x_end, lambda) << endl;
+			cout << calculate_logreg_accuracy(x_end) << " corrects out of " << numSamples << endl;
+
+			cout << epoch << endl;
+		}
+	}
+
+	if (useEncrypted == 1 && useCompressed == 1) {
+		free(transformedColumn1);
+		free(transformedColumn2);
+	}
+	else if (useEncrypted == 1 || useCompressed == 1) {
+		free(transformedColumn2);
+	}
+	free(x);
+	free(x_end);
+	free(residual);
 }
 
 void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, uint32_t residualUpdatePeriod, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler) {
@@ -583,7 +969,8 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 	float* x_end = (float*)aligned_alloc(64, numFeatures*sizeof(float));
 	memset(x_end, 0, numFeatures*sizeof(float));
 	
-	cout << "Initial loss: " << calculate_loss(x_end) << endl;
+	cout << "Initial loss: " << calculate_linreg_loss(x_end) << endl;
+	cout << "Initial accuracy: " << calculate_accuracy(x_end, 0, 1, -1) << " corrects out of " << numSamples << endl;
 
 	float* transformedColumn1 = NULL;
 	float* transformedColumn2 = NULL;
@@ -741,13 +1128,18 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 						temp_time2 = get_time();
 						dot_product_time += (temp_time2-temp_time1);
 
-						cout << "gradient: " << gradient << endl;
+						// cout << "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" << endl;
+						// cout << "gradient: " << gradient << endl;
 						float step = stepSize*(gradient/minibatchSize);
 						x[m*numFeatures + j] -= step;
-						cout << "step : " << step << endl;
+						// cout << "step : " << step << endl;
 
 						for (uint32_t i = 0; i < minibatchSize; i++) {
 							residual[m*minibatchSize + i] -= step*transformedColumn2[i];
+							// if (i % 16 == 0) {
+							// 	cout << "delta: " << step*transformedColumn2[i] << endl;
+							// 	cout << "residual: " << residual[m*minibatchSize + i] << endl;
+							// }
 						}
 						temp_time3 = get_time();
 						residual_update_time += (temp_time3-temp_time2);
@@ -787,8 +1179,8 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 				}
 			}
 			else {
-				cout << "Loss " << epoch << ": " << calculate_loss(x_end) << endl;
-				cout << calculate_accuracy(x_end) << " corrects out of " << numSamples << endl;
+				cout << "Loss " << epoch << ": " << calculate_linreg_loss(x_end) << endl;
+				cout << calculate_accuracy(x_end, 0, 1, -1) << " corrects out of " << numSamples << endl;
 			}
 
 			cout << epoch << endl;
@@ -831,7 +1223,7 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 	memset(x_end, 0, numFeatures*sizeof(float));
 
 	cout << "---------------------------------------" << endl;
-	cout << "Initial loss: " << calculate_loss(x_end) << endl;
+	cout << "Initial loss: " << calculate_linreg_loss(x_end) << endl;
 
 	float* transformedColumn1 = NULL;
 	float* transformedColumn2 = NULL;
@@ -962,7 +1354,7 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 			}
 		}
 		else
-			cout << "Loss " << epoch << ": " << calculate_loss(x_end) << endl;
+			cout << "Loss " << epoch << ": " << calculate_linreg_loss(x_end) << endl;
 
 		cout << epoch << endl;
 	}
@@ -1139,7 +1531,7 @@ void* batch_thread(void* args) {
 				}
 			}
 			else
-				cout << "Loss " << epoch << ": " << r->app->calculate_loss(r->x) << endl;
+				cout << "Loss " << epoch << ": " << r->app->calculate_linreg_loss(r->x) << endl;
 			cout << epoch << endl;
 		}
 	}
@@ -1178,7 +1570,7 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32
 	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
 
 	cout << "---------------------------------------" << endl;
-	cout << "Initial loss: " << calculate_loss(x) << endl;
+	cout << "Initial loss: " << calculate_linreg_loss(x) << endl;
 
 	uint32_t startingBatch = 0;
 	pthread_barrier_init(&barrier, NULL, NUM_THREADS);
@@ -1595,7 +1987,7 @@ void scd::float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs
 	float* x = (float*)aligned_alloc(64, numFeatures*sizeof(float));
 	memset(x, 0, numFeatures*sizeof(float));
 	
-	cout << "Initial loss: " << calculate_loss(x) << endl;
+	cout << "Initial loss: " << calculate_linreg_loss(x) << endl;
 
 	float tempStepSize;
 	if (doRealSCD == 1)
@@ -1757,7 +2149,7 @@ void scd::float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs
 				}
 			}
 			else
-				cout << "Loss " << e << ": " << calculate_loss(x_end) << endl;
+				cout << "Loss " << e << ": " << calculate_linreg_loss(x_end) << endl;
 		}
 	}
 	else {
@@ -1776,14 +2168,68 @@ void scd::float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs
 				}
 			}
 			else
-				cout << "Loss " << e << ": " << calculate_loss(x) << endl;
+				cout << "Loss " << e << ": " << calculate_linreg_loss(x) << endl;
 		}
 	}
 
 	free(x_history_local);
 }
 
-float scd::calculate_loss(float* x) {
+float scd::calculate_l2svm_loss(float* x, float costPos, float costNeg, float lambda) {
+	float loss = 0;
+	for(uint32_t i = 0; i < numSamples; i++) {
+		float dot = 0.0;
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			dot += x[j]*a[j][i];
+		}
+		float temp = 1 - b[i]*dot;
+		if (temp > 0) {
+			if (b[i] > 0)
+				loss += costPos*temp*temp;
+			else
+				loss += costNeg*temp*temp;
+		}
+	}
+	loss /= (float)(2*numSamples);
+
+	float regularizer = 0;
+	for (uint32_t j = 0; j < numFeatures; j++) {
+		regularizer += x[j]*x[j];
+	}
+	regularizer *= lambda*0.5;
+
+	loss += regularizer;
+	return loss;
+}
+
+float scd::calculate_logreg_loss(float* x, float lambda) {
+	float loss = 0;
+	for(uint32_t i = 0; i < numSamples; i++) {
+		float dot = 0.0;
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			dot += x[j]*a[j][i];
+		}
+		float prediction = 1/(1+exp(-dot));
+
+		loss += b[i]*log(prediction) + (1-b[i])*log(1 - prediction);	
+	}
+
+	loss /= (float)numSamples;
+	loss = -loss;
+
+	cout << "loss: " << loss << endl;
+
+	float regularizer = 0;
+	for (uint32_t j = 0; j < numFeatures; j++) {
+		regularizer += x[j]*x[j];
+	}
+	regularizer *= (lambda*0.5)/numSamples;
+
+	loss += regularizer;
+	return loss;
+}
+
+float scd::calculate_linreg_loss(float* x) {
 	float loss = 0;
 	for(uint32_t i = 0; i < numSamples; i++) {
 		float dot = 0.0;
@@ -1797,14 +2243,33 @@ float scd::calculate_loss(float* x) {
 	return loss;
 }
 
-uint32_t scd::calculate_accuracy(float* x) {
+uint32_t scd::calculate_logreg_accuracy(float* x) {
+	uint32_t corrects = 0;
+	uint32_t positives = 0;
+	for(uint32_t i = 0; i < numSamples; i++) {
+		float dot = 0.0;
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			dot += x[j]*a[j][i];
+		}
+		float prediction = 1/(1+exp(-dot));
+		if ( (prediction > 0.5 && b[i] == 1.0) || (prediction < 0.5 && b[i] == 0) )
+			corrects++;
+		if (prediction > 0.5)
+			positives++;
+	}
+	cout << "positives: " << positives << endl;
+
+	return corrects;
+}
+
+uint32_t scd::calculate_accuracy(float* x, float decisionBoundary, int trueLabel, int falseLabel) {
 	uint32_t corrects = 0;
 	for(uint32_t i = 0; i < numSamples; i++) {
 		float dot = 0.0;
 		for (uint32_t j = 0; j < numFeatures; j++) {
 			dot += x[j]*a[j][i];
 		}
-		if ( (dot >= 0.5 && b[i] == 1) || (dot < 0.5 && b[i] == 0) )
+		if ( (dot > decisionBoundary && b[i] == trueLabel) || (dot < decisionBoundary && b[i] == falseLabel) )
 			corrects++;
 	}
 

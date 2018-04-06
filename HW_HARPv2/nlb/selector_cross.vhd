@@ -66,7 +66,7 @@ end selector_cross;
 architecture behavioral of selector_cross is
 
 constant REQUEST_FIFO_DEPTH_BITS : integer := 8;
-constant RESPONSE_FIFO_DEPTH_BITS : integer := REQUEST_FIFO_DEPTH_BITS+1;
+constant RESPONSE_FIFO_DEPTH_BITS : integer := REQUEST_FIFO_DEPTH_BITS+2;
 
 signal resetn_200 : std_logic;
 signal start_200 : std_logic;
@@ -746,22 +746,23 @@ if clk_200'event and clk_200 = '1' then
     if configfifo_rdempty = '0' then
         configfifo_rdreq <= '1';
     end if;
+
+    src_addr_200                    <= configfifo_q(576+2*ADDRESS_WIDTH-1 downto 576+ADDRESS_WIDTH);
+    dst_addr_200                    <= configfifo_q(576+ADDRESS_WIDTH-1 downto 576);
+    config7_200                     <= configfifo_q(575 downto 512);
+    config6_200                     <= configfifo_q(511 downto 448);
+    config5_200                     <= configfifo_q(447 downto 384);
+    config4_200                     <= configfifo_q(383 downto 320);
+    config3_200                     <= configfifo_q(319 downto 256);
+    config2_200                     <= configfifo_q(255 downto 192);
+    config1_200                     <= configfifo_q(191 downto 128);
+    number_of_CL_to_process_200     <= configfifo_q(127 downto 96);
+    addr_reset_200                  <= configfifo_q(95 downto 64);
+    read_offset_200                 <= configfifo_q(63 downto 32);
+    write_offset_200                <= configfifo_q(31 downto 0);
 end if;
 end process;
 
-src_addr_200                    <= configfifo_q(576+2*ADDRESS_WIDTH-1 downto 576+ADDRESS_WIDTH);
-dst_addr_200                    <= configfifo_q(576+ADDRESS_WIDTH-1 downto 576);
-config7_200                     <= configfifo_q(575 downto 512);
-config6_200                     <= configfifo_q(511 downto 448);
-config5_200                     <= configfifo_q(447 downto 384);
-config4_200                     <= configfifo_q(383 downto 320);
-config3_200                     <= configfifo_q(319 downto 256);
-config2_200                     <= configfifo_q(255 downto 192);
-config1_200                     <= configfifo_q(191 downto 128);
-number_of_CL_to_process_200     <= configfifo_q(127 downto 96);
-addr_reset_200                  <= configfifo_q(95 downto 64);
-read_offset_200                 <= configfifo_q(63 downto 32);
-write_offset_200                <= configfifo_q(31 downto 0);
 configfifo: async_fifo
 generic map (
     FIFO_WIDTH => 576+2*ADDRESS_WIDTH,
