@@ -20,7 +20,7 @@
 using namespace std;
 
 #define NUM_THREADS 14
-#define NUM_FINSTANCES 3
+#define NUM_FINSTANCES 4
 
 class scd {
 
@@ -59,7 +59,7 @@ public:
 
 	scd(char getFPGA){
 		page_size_in_cache_lines = 65536; // 65536 x 64B = 4 MB
-		pages_to_allocate = 8;
+		pages_to_allocate = 1024;
 		numValuesPerLine = 16;
 
 		if (getFPGA == 1) {
@@ -70,10 +70,10 @@ public:
 			}
 			gotFPGA = 1;
 
-			cout << "Zeroing allocated space.." << endl;
-			for (uint32_t i = 0; i < numValuesPerLine*page_size_in_cache_lines*pages_to_allocate; i++) {
-				interfaceFPGA->writeToMemory32('i', 0, i);
-			}
+			// cout << "Zeroing allocated space.." << endl;
+			// for (uint32_t i = 0; i < numValuesPerLine*page_size_in_cache_lines*pages_to_allocate; i++) {
+			// 	interfaceFPGA->writeToMemory32('i', 0, i);
+			// }
 		}
 		else
 			gotFPGA = 0;
@@ -207,7 +207,7 @@ public:
 	void float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, uint32_t residualUpdatePeriod, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 #ifdef AVX2
 	void AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
-	void AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
+	void AVXmulti_float_linreg_SCD(float* x_history, char doRealSCD, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 	double AVXmulti_justread(uint32_t minibatchSize, char useEncrypted, char useCompressed);
 #endif
 
@@ -1326,7 +1326,6 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 								stepReduce[6] + 
 								stepReduce[7]);
 
-
 				__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
 
 				x[m*numFeatures + j] += stepReduce[0];
@@ -1415,12 +1414,19 @@ typedef struct {
 	double decompression_time;
 	double dot_product_time;
 	double residual_update_time;
+	float* stepsFromThreads;
+	uint32_t numThreads;
+	char doRealSCD;
 } batch_thread_data;
 
 void* batch_thread(void* args) {
 	batch_thread_data* r = (batch_thread_data*)args;
 
-	float scaledStepSize = -r->stepSize/(float)r->minibatchSize;
+	float scaledStepSize;
+	if (r->doRealSCD == 1)
+		scaledStepSize = -r->stepSize/((float)r->minibatchSize*(float)r->numMinibatches);
+	else
+		scaledStepSize = -r->stepSize/(float)r->minibatchSize;
 	__m256 scaledStepSize_temp = _mm256_set1_ps(scaledStepSize);
 
 	float* transformedColumn1 = NULL;
@@ -1433,7 +1439,14 @@ void* batch_thread(void* args) {
 		transformedColumn2 = (float*)aligned_alloc(64, r->minibatchSize*sizeof(float));
 	}
 
-	double start, end;
+	float* x_end = NULL;
+	if (r->tid == 0) {
+		x_end= (float*)aligned_alloc(64, r->numFeatures*sizeof(float));
+		memset(x_end, 0, r->numFeatures*sizeof(float));
+	}
+
+	double start, end, epoch_times;
+	epoch_times = 0;
 
 	for(uint32_t epoch = 0; epoch < r->numEpochs; epoch++) {
 
@@ -1450,111 +1463,262 @@ void* batch_thread(void* args) {
 		__m256 a_temp;
 		__m256 b_temp;
 
-		for (uint32_t m = r->startingBatch; m < r->startingBatch + r->numBatchesToProcess; m++) {
+		if (r->doRealSCD == 1) {
 			for (uint32_t j = 0; j < r->numFeatures; j++) {
+				r->stepsFromThreads[r->tid] = 0;
+				pthread_barrier_wait(r->barrier);
+				for (uint32_t m = r->startingBatch; m < r->startingBatch + r->numBatchesToProcess; m++) {
 
-				if (r->useEncrypted == 1 && r->useCompressed == 1) {
-					int32_t compressed_a_offset = 0;
-					if (m > 0)
-						compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
+					if (r->useEncrypted == 1 && r->useCompressed == 1) {
+						int32_t compressed_a_offset = 0;
+						if (m > 0)
+							compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
+
+						temp_time1 = get_time();
+						r->app->decrypt_column(r->app->encrypted_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn1);
+						temp_time2 = get_time();
+						r->decryption_time += (temp_time2-temp_time1);
+						r->app->decompress_column((uint32_t*)transformedColumn1, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, r->toIntegerScaler);
+						temp_time3 = get_time();
+						r->decompression_time += (temp_time3-temp_time2);
+					}
+					else if (r->useEncrypted == 1) {
+						temp_time1 = get_time();
+						r->app->decrypt_column(r->app->encrypted_a[j] + m*r->minibatchSize, r->minibatchSize, transformedColumn2);
+						temp_time2 = get_time();
+						r->decryption_time += (temp_time2-temp_time1);
+					}
+					else if (r->useCompressed == 1) {
+						temp_time1 = get_time();
+						int32_t compressed_a_offset = 0;
+						if (m > 0)
+							compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
+						r->app->decompress_column(r->app->compressed_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, r->toIntegerScaler);
+						temp_time2 = get_time();
+						r->decompression_time += (temp_time2-temp_time1);
+					}
+					else {
+						transformedColumn2 = r->a[j] + m*r->minibatchSize;
+					}
 
 					temp_time1 = get_time();
-					r->app->decrypt_column(r->app->encrypted_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn1);
+					__m256 gradient = _mm256_setzero_ps();
+					for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
+						a_temp = _mm256_load_ps(transformedColumn2 + i);
+						b_temp = _mm256_load_ps(r->b + m*r->minibatchSize + i);
+						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
+
+						__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
+						gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
+					}
+					__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
+
+					float stepReduce[8];
+					_mm256_store_ps(stepReduce, step);
+					stepReduce[0] = (stepReduce[0] + 
+									stepReduce[1] + 
+									stepReduce[2] + 
+									stepReduce[3] + 
+									stepReduce[4] + 
+									stepReduce[5] + 
+									stepReduce[6] + 
+									stepReduce[7]);
+					r->stepsFromThreads[r->tid] += stepReduce[0];
+
 					temp_time2 = get_time();
-					r->decryption_time += (temp_time2-temp_time1);
-					r->app->decompress_column((uint32_t*)transformedColumn1, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, r->toIntegerScaler);
+					r->dot_product_time += (temp_time2-temp_time1);
+				}
+
+				pthread_barrier_wait(r->barrier);
+				if (r->tid == 0) {
+					for (uint32_t t = 1; t < r->numThreads; t++) {
+						r->stepsFromThreads[0] += r->stepsFromThreads[t];
+					}
+					for (uint32_t t = 0; t < r->numThreads; t++) {
+						r->stepsFromThreads[t] = r->stepsFromThreads[0];
+					}
+					x_end[j] += r->stepsFromThreads[0];
+				}
+				pthread_barrier_wait(r->barrier);
+
+				for (uint32_t m = r->startingBatch; m < r->startingBatch + r->numBatchesToProcess; m++) {
+
+					if (r->useEncrypted == 1 && r->useCompressed == 1) {
+						int32_t compressed_a_offset = 0;
+						if (m > 0)
+							compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
+
+						temp_time1 = get_time();
+						r->app->decrypt_column(r->app->encrypted_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn1);
+						temp_time2 = get_time();
+						r->decryption_time += (temp_time2-temp_time1);
+						r->app->decompress_column((uint32_t*)transformedColumn1, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, r->toIntegerScaler);
+						temp_time3 = get_time();
+						r->decompression_time += (temp_time3-temp_time2);
+					}
+					else if (r->useEncrypted == 1) {
+						temp_time1 = get_time();
+						r->app->decrypt_column(r->app->encrypted_a[j] + m*r->minibatchSize, r->minibatchSize, transformedColumn2);
+						temp_time2 = get_time();
+						r->decryption_time += (temp_time2-temp_time1);
+					}
+					else if (r->useCompressed == 1) {
+						temp_time1 = get_time();
+						int32_t compressed_a_offset = 0;
+						if (m > 0)
+							compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
+						r->app->decompress_column(r->app->compressed_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, r->toIntegerScaler);
+						temp_time2 = get_time();
+						r->decompression_time += (temp_time2-temp_time1);
+					}
+					else {
+						transformedColumn2 = r->a[j] + m*r->minibatchSize;
+					}
+
+					__m256 stepReduce_temp = _mm256_set1_ps(r->stepsFromThreads[r->tid]);
+
+					temp_time2 = get_time();
+
+					for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
+						a_temp = _mm256_load_ps(transformedColumn2 + i);
+						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
+						residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
+
+						_mm256_store_ps(r->residual + m*r->minibatchSize + i, residual_temp);
+					}
+
 					temp_time3 = get_time();
-					r->decompression_time += (temp_time3-temp_time2);
+					r->residual_update_time += (temp_time3-temp_time2);
 				}
-				else if (r->useEncrypted == 1) {
-					temp_time1 = get_time();
-					r->app->decrypt_column(r->app->encrypted_a[j] + m*r->minibatchSize, r->minibatchSize, transformedColumn2);
-					temp_time2 = get_time();
-					r->decryption_time += (temp_time2-temp_time1);
+			}
+
+			if (r->tid == 0) {
+				end = get_time();
+				epoch_times += (end-start);
+				cout << "Time for one epoch: " << end-start << endl;
+
+				if (r->x_history != NULL) {
+					for (uint32_t j = 0; j < r->numFeatures; j++) {
+						r->x_history[epoch*r->numFeatures + j] = x_end[j];
+					}
 				}
-				else if (r->useCompressed == 1) {
-					temp_time1 = get_time();
-					int32_t compressed_a_offset = 0;
-					if (m > 0)
-						compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
-					r->app->decompress_column(r->app->compressed_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, r->toIntegerScaler);
-					temp_time2 = get_time();
-					r->decompression_time += (temp_time2-temp_time1);
-				}
-				else {
-					transformedColumn2 = r->a[j] + m*r->minibatchSize;
-				}
-
-				temp_time1 = get_time();
-				__m256 gradient = _mm256_setzero_ps();
-				for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
-					a_temp = _mm256_load_ps(transformedColumn2 + i);
-					b_temp = _mm256_load_ps(r->b + m*r->minibatchSize + i);
-					residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
-
-					__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
-					gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
-				}
-				__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
-
-				float stepReduce[8];
-				_mm256_store_ps(stepReduce, step);
-				stepReduce[0] = (stepReduce[0] + 
-								stepReduce[1] + 
-								stepReduce[2] + 
-								stepReduce[3] + 
-								stepReduce[4] + 
-								stepReduce[5] + 
-								stepReduce[6] + 
-								stepReduce[7]);
-
-
-				__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
-
-				r->x[m*r->numFeatures + j] += stepReduce[0];
-
-				temp_time2 = get_time();
-				r->dot_product_time += (temp_time2-temp_time1);
-
-				for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
-					a_temp = _mm256_load_ps(transformedColumn2 + i);
-					residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
-					residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
-
-					_mm256_store_ps(r->residual + m*r->minibatchSize + i, residual_temp);
-				}
-
-				temp_time3 = get_time();
-				r->residual_update_time += (temp_time3-temp_time2);
+				else
+					cout << "Loss " << epoch << ": " << r->app->calculate_linreg_loss(x_end) << endl;
+				cout << epoch << endl;
 			}
 		}
-
-		pthread_barrier_wait(r->barrier);
-		temp_time1 = get_time();
-
-		if (r->tid == 0) {
-			for (uint32_t m = 1; m < r->numMinibatches; m++) {
+		else {
+			for (uint32_t m = r->startingBatch; m < r->startingBatch + r->numBatchesToProcess; m++) {
 				for (uint32_t j = 0; j < r->numFeatures; j++) {
-					r->x[j] += r->x[m*r->numFeatures + j];
+
+					if (r->useEncrypted == 1 && r->useCompressed == 1) {
+						int32_t compressed_a_offset = 0;
+						if (m > 0)
+							compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
+
+						temp_time1 = get_time();
+						r->app->decrypt_column(r->app->encrypted_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn1);
+						temp_time2 = get_time();
+						r->decryption_time += (temp_time2-temp_time1);
+						r->app->decompress_column((uint32_t*)transformedColumn1, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, r->toIntegerScaler);
+						temp_time3 = get_time();
+						r->decompression_time += (temp_time3-temp_time2);
+					}
+					else if (r->useEncrypted == 1) {
+						temp_time1 = get_time();
+						r->app->decrypt_column(r->app->encrypted_a[j] + m*r->minibatchSize, r->minibatchSize, transformedColumn2);
+						temp_time2 = get_time();
+						r->decryption_time += (temp_time2-temp_time1);
+					}
+					else if (r->useCompressed == 1) {
+						temp_time1 = get_time();
+						int32_t compressed_a_offset = 0;
+						if (m > 0)
+							compressed_a_offset = r->app->compressed_a_sizes[j][m-1];
+						r->app->decompress_column(r->app->compressed_a[j] + compressed_a_offset, r->app->compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, r->toIntegerScaler);
+						temp_time2 = get_time();
+						r->decompression_time += (temp_time2-temp_time1);
+					}
+					else {
+						transformedColumn2 = r->a[j] + m*r->minibatchSize;
+					}
+
+					temp_time1 = get_time();
+					__m256 gradient = _mm256_setzero_ps();
+					for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
+						a_temp = _mm256_load_ps(transformedColumn2 + i);
+						b_temp = _mm256_load_ps(r->b + m*r->minibatchSize + i);
+						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
+
+						__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
+						gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
+					}
+					__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
+
+					float stepReduce[8];
+					_mm256_store_ps(stepReduce, step);
+					stepReduce[0] = (stepReduce[0] + 
+									stepReduce[1] + 
+									stepReduce[2] + 
+									stepReduce[3] + 
+									stepReduce[4] + 
+									stepReduce[5] + 
+									stepReduce[6] + 
+									stepReduce[7]);
+
+					__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
+
+					r->x[m*r->numFeatures + j] += stepReduce[0];
+
+					temp_time2 = get_time();
+					r->dot_product_time += (temp_time2-temp_time1);
+
+					for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
+						a_temp = _mm256_load_ps(transformedColumn2 + i);
+						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
+						residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
+
+						_mm256_store_ps(r->residual + m*r->minibatchSize + i, residual_temp);
+					}
+
+					temp_time3 = get_time();
+					r->residual_update_time += (temp_time3-temp_time2);
 				}
 			}
-			for (uint32_t j = 0; j < r->numFeatures; j++) {
-				r->x[j] = r->x[j]/r->numMinibatches;
-			}
 
-			end = get_time();
-			cout << "Time for one epoch: " << end-start << endl;
+			pthread_barrier_wait(r->barrier);
+			temp_time1 = get_time();
 
-			if (r->x_history != NULL) {
+			if (r->tid == 0) {
 				for (uint32_t j = 0; j < r->numFeatures; j++) {
-					r->x_history[epoch*r->numFeatures + j] = r->x[j];
+					x_end[j] = 0;
 				}
+				for (uint32_t m = 0; m < r->numMinibatches; m++) {
+					for (uint32_t j = 0; j < r->numFeatures; j++) {
+						x_end[j] += r->x[m*r->numFeatures + j];
+					}
+				}
+				for (uint32_t j = 0; j < r->numFeatures; j++) {
+					x_end[j] = x_end[j]/r->numMinibatches;
+				}
+
+				end = get_time();
+				epoch_times += (end-start);
+				cout << "Time for one epoch: " << end-start << endl;
+
+				if (r->x_history != NULL) {
+					for (uint32_t j = 0; j < r->numFeatures; j++) {
+						r->x_history[epoch*r->numFeatures + j] = x_end[j];
+					}
+				}
+				else
+					cout << "Loss " << epoch << ": " << r->app->calculate_linreg_loss(x_end) << endl;
+				cout << epoch << endl;
 			}
-			else
-				cout << "Loss " << epoch << ": " << r->app->calculate_linreg_loss(r->x) << endl;
-			cout << epoch << endl;
 		}
 	}
+	if (r->tid == 0)
+		cout << "avg epoch time: " << epoch_times/r->numEpochs << endl;
 
 	if (r->useEncrypted == 1 && r->useCompressed == 1) {
 		free(transformedColumn1);
@@ -1563,10 +1727,13 @@ void* batch_thread(void* args) {
 	else if (r->useEncrypted == 1 || r->useCompressed == 1) {
 		free(transformedColumn2);
 	}
+	if (r->tid == 0)
+		free(x_end);
+
 	return NULL;
 }
 
-void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler) {
+void scd::AVXmulti_float_linreg_SCD(float* x_history, char doRealSCD, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler) {
 	if (minibatchSize%8 == 8) {
 		cout << "For AVX minibatchSize%8 must be 0!" << endl;
 		exit(1);
@@ -1588,6 +1755,7 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32
 
 	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
 	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	float stepsFromThreads[NUM_THREADS];
 
 	cout << "---------------------------------------" << endl;
 	cout << "Initial loss: " << calculate_linreg_loss(x) << endl;
@@ -1622,6 +1790,9 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32
 		args[n].useCompressed = useCompressed;
 		args[n].useEncrypted = useEncrypted;
 		args[n].toIntegerScaler = toIntegerScaler;
+		args[n].stepsFromThreads = stepsFromThreads;
+		args[n].numThreads = NUM_THREADS;
+		args[n].doRealSCD = doRealSCD;
 
 		pthread_create(&threads[n], &attr, batch_thread, (void*)&args[n]);
 		startingBatch += args[n].numBatchesToProcess;
