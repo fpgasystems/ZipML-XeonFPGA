@@ -470,7 +470,7 @@ inst_requestor(
 );
 
 selector_cross #(
-  .NUM_SELECTORS(3),
+  .NUM_SELECTORS(4),
   .ADDRESS_WIDTH(ADDR_LMT)
   )
 selector_cross (
