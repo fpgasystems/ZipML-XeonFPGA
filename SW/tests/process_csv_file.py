@@ -14,12 +14,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
 	'--file',
 	type=str,
-	default='',
+	required=1,
 	help='Absolute path to the csv file.')
 parser.add_argument(
 	'--label_index',
 	type=int,
-	default=0,
+	required = 1,
 	help='index of label value in csv sample')
 
 args = parser.parse_args()
