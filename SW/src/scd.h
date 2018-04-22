@@ -15,11 +15,12 @@
 
 #ifdef AVX2
 #include "immintrin.h"
+#include "avx_mathfun.h"
 #endif
 
 using namespace std;
 
-#define NUM_THREADS 14
+#define MAX_NUM_THREADS 14
 #define NUM_FINSTANCES 4
 
 class scd {
@@ -69,11 +70,6 @@ public:
 				exit(1);
 			}
 			gotFPGA = 1;
-
-			// cout << "Zeroing allocated space.." << endl;
-			// for (uint32_t i = 0; i < numValuesPerLine*page_size_in_cache_lines*pages_to_allocate; i++) {
-			// 	interfaceFPGA->writeToMemory32('i', 0, i);
-			// }
 		}
 		else
 			gotFPGA = 0;
@@ -179,22 +175,26 @@ public:
 	float calculate_l2svm_loss(float* x, float costPos, float costNeg, float lambda);
 	float calculate_logreg_loss(float* x, float lambda, float* sampleWeights);
 	float calculate_linreg_loss(float* x);
-	uint32_t calculate_logreg_accuracy(float* x);
+	uint32_t calculate_logreg_accuracy(float* x, uint32_t startIndex, uint32_t length);
 	uint32_t calculate_accuracy(float* x, float decisionBoundary, int trueLabel, int falseLabel);
 	void write_logreg_predictions(float* x, float* a_min, float* a_range) {
 		ofstream ofs ("predictions.txt", ofstream::out);
 		for(uint32_t i = 0; i < numSamples; i++) {
 			float dot = x[0]*a[0][i]; // Bias term
 			for (uint32_t j = 1; j < numFeatures; j++) {
-				dot += x[j]*((a[j][i] - a_min[j])/a_range[j]);
+				if (a_range[j] > 0)
+					dot += x[j]*((a[j][i] - a_min[j])/a_range[j]);
+				else
+					dot += x[j]*a[j][i];
 			}
 			float prediction = 1/(1+exp(-dot));
-			if (i < 50)
-				cout << prediction << endl;
-			if (prediction >= 0.5)
-				ofs << 1 << endl;
-			else
-				ofs << 0 << endl;
+			if (i < 10) {
+				cout << "a_min[j]: " << a_min[1] << endl;
+				cout << "a_range[j]: " << a_range[1] << endl;
+				cout << "dot: " << dot << endl;
+				cout << "prediction: " << prediction << endl;
+			}
+			ofs << prediction << endl;
 		}
 		ofs.close();
 	}
@@ -207,7 +207,8 @@ public:
 	void float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, uint32_t residualUpdatePeriod, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 #ifdef AVX2
 	void AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
-	void AVXmulti_float_linreg_SCD(float* x_history, char doRealSCD, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
+	void AVX_float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
+	void AVXmulti_float_linlogreg_SCD(float* x_history, char doRealSCD, char doLogreg, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numThreads);
 	double AVXmulti_justread(uint32_t minibatchSize, char useEncrypted, char useCompressed);
 #endif
 
@@ -229,8 +230,13 @@ void scd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _num
 	numSamples = _numSamples;
 	numFeatures = _numFeatures+1; // For the bias term
 
-	if (a != NULL)
+	if (a != NULL) {
+		cout << "Freeing a..." << endl;
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			free(a[j]);
+		}
 		free(a);
+	}
 	a = (float**)malloc(numFeatures*sizeof(float*));
 	for (uint32_t j = 0; j < numFeatures; j++) {
 		a[j] = (float*)aligned_alloc(64, numSamples*sizeof(float));
@@ -293,8 +299,13 @@ void scd::load_raw_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFea
 	numSamples = _numSamples;
 	numFeatures = _numFeatures+1;
 
-	if (a != NULL)
+	if (a != NULL) {
+		cout << "Freeing a..." << endl;
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			free(a[j]);
+		}
 		free(a);
+	}
 	a = (float**)malloc(numFeatures*sizeof(float*));
 	for (uint32_t j = 0; j < numFeatures; j++) {
 		a[j] = (float*)aligned_alloc(64, numSamples*sizeof(float));
@@ -707,7 +718,7 @@ void scd::float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 	memset(gradient, 0, numFeatures*sizeof(float));
 
 	cout << "Initial loss: " << calculate_logreg_loss(x, lambda, sampleWeights) << endl;
-	cout << "Initial accuracy: " << calculate_logreg_accuracy(x) << " corrects out of " << numSamples << endl;
+	cout << "Initial accuracy: " << calculate_logreg_accuracy(x, 0, numSamples) << " corrects out of " << numSamples << endl;
 
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
@@ -748,7 +759,7 @@ void scd::float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 		}
 		
 		cout << "Loss " << epoch << ": " << calculate_logreg_loss(x, lambda, sampleWeights) << endl;
-		uint32_t accuracy = calculate_logreg_accuracy(x);
+		uint32_t accuracy = calculate_logreg_accuracy(x, 0, numSamples);
 		cout << accuracy << " corrects out of " << numSamples << endl;
 
 		cout << epoch << endl;
@@ -831,7 +842,7 @@ void scd::float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 	memset(x_end, 0, numFeatures*sizeof(float));
 	
 	cout << "Initial loss: " << calculate_logreg_loss(x_end, lambda, NULL) << endl;
-	cout << "Initial accuracy: " << calculate_logreg_accuracy(x_end) << " corrects out of " << numSamples << endl;
+	cout << "Initial accuracy: " << calculate_logreg_accuracy(x_end, 0, numSamples) << " corrects out of " << numSamples << endl;
 
 	float* transformedColumn1 = NULL;
 	float* transformedColumn2 = NULL;
@@ -843,6 +854,7 @@ void scd::float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
 	}
 
+	uint32_t epoch_index = 0;
 	for(uint32_t epoch = 0; epoch < numEpochs + (numEpochs/residualUpdatePeriod); epoch++) {
 
 		double decryption_time = 0;
@@ -904,20 +916,11 @@ void scd::float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 					temp_time2 = get_time();
 					dot_product_time += (temp_time2-temp_time1);
 
-					// cout << "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" << endl;
-					// cout << "gradient: " << gradient << endl;
 					float step = stepSize*((gradient + lambda)/minibatchSize); 
-					// if (step < x[m*numFeatures + j])
-					// 	step = x[m*numFeatures + j];
 					x[m*numFeatures + j] -= step;
-					// cout << "step : " << step << endl;
 
 					for (uint32_t i = 0; i < minibatchSize; i++) {
 						residual[m*minibatchSize + i] -= step*transformedColumn2[i];
-						// if (i % 16 == 0) {
-						// 	cout << "delta: " << step*transformedColumn2[i] << endl;
-						// 	cout << "residual: " << residual[m*minibatchSize + i] << endl;
-						// }
 					}
 					temp_time3 = get_time();
 					residual_update_time += (temp_time3-temp_time2);
@@ -952,11 +955,14 @@ void scd::float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 			if (x_history != NULL) {
 				for (uint32_t j = 0; j < numFeatures; j++) {
-					x_history[epoch*numFeatures + j] = x_end[j];
+					x_history[epoch_index*numFeatures + j] = x_end[j];
 				}
+				epoch_index++;
 			}
-			cout << "Loss " << epoch << ": " << calculate_logreg_loss(x_end, lambda, NULL) << endl;
-			cout << calculate_logreg_accuracy(x_end) << " corrects out of " << numSamples << endl;
+			else {
+				cout << "Loss " << epoch << ": " << calculate_logreg_loss(x_end, lambda, NULL) << endl;
+				cout << calculate_logreg_accuracy(x_end, 0, numSamples) << " corrects out of " << numSamples << endl;
+			}
 
 			cout << epoch << endl;
 		}
@@ -1002,6 +1008,7 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 		transformedColumn2 = (float*)aligned_alloc(64, numMinibatchesAtATime*minibatchSize*sizeof(float));
 	}
 
+	uint32_t epoch_index = 0;
 	for(uint32_t epoch = 0; epoch < numEpochs + (numEpochs/residualUpdatePeriod); epoch++) {
 
 		double decryption_time = 0;
@@ -1137,7 +1144,6 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 							else
 								residual[m*minibatchSize + i] += x_end[j]*transformedColumn2[i];
 						}
-						// cout << "residual[0]:" << residual[0] << endl;
 					}
 					else {
 						temp_time1 = get_time();
@@ -1148,18 +1154,11 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 						temp_time2 = get_time();
 						dot_product_time += (temp_time2-temp_time1);
 
-						// cout << "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" << endl;
-						// cout << "gradient: " << gradient << endl;
 						float step = stepSize*(gradient/minibatchSize);
 						x[m*numFeatures + j] -= step;
-						// cout << "step : " << step << endl;
 
 						for (uint32_t i = 0; i < minibatchSize; i++) {
 							residual[m*minibatchSize + i] -= step*transformedColumn2[i];
-							// if (i % 16 == 0) {
-							// 	cout << "delta: " << step*transformedColumn2[i] << endl;
-							// 	cout << "residual: " << residual[m*minibatchSize + i] << endl;
-							// }
 						}
 						temp_time3 = get_time();
 						residual_update_time += (temp_time3-temp_time2);
@@ -1195,8 +1194,9 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 			if (x_history != NULL) {
 				for (uint32_t j = 0; j < numFeatures; j++) {
-					x_history[epoch*numFeatures + j] = x_end[j];
+					x_history[epoch_index*numFeatures + j] = x_end[j];
 				}
+				epoch_index++;
 			}
 			else {
 				cout << "Loss " << epoch << ": " << calculate_linreg_loss(x_end) << endl;
@@ -1390,6 +1390,203 @@ void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t mi
 	free(residual);
 }
 
+void scd::AVX_float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler) {
+	if (minibatchSize%8 == 8) {
+		cout << "For AVX minibatchSize%8 must be 0!" << endl;
+		exit(1);
+	}
+
+	float scaledStepSize = -stepSize/(float)minibatchSize;
+	__m256 scaledStepSize_temp = _mm256_set1_ps(scaledStepSize);
+	__m256 lambda_temp = _mm256_set1_ps(lambda/(float)minibatchSize);
+	__m256 ones = _mm256_set1_ps(1.0);
+	__m256 minusOnes = _mm256_set1_ps(-1.0);
+
+	float* residual = (float*)aligned_alloc(64, numSamples*sizeof(float));
+	memset(residual, 0, numSamples*sizeof(float));
+
+	uint32_t numMinibatches = numSamples/minibatchSize;
+	cout << "numMinibatches: " << numMinibatches << endl;
+	uint32_t rest = numSamples - numMinibatches*minibatchSize;
+	cout << "rest: " << rest << endl;
+
+	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
+	float* x_end = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(x_end, 0, numFeatures*sizeof(float));
+
+	cout << "---------------------------------------" << endl;
+	cout << "Initial loss: " << calculate_logreg_loss(x_end, lambda, NULL) << endl;
+	cout << "Initial accuracy: " << calculate_logreg_accuracy(x_end, 0, numSamples) << " corrects out of " << numSamples << endl;
+
+	float* transformedColumn1 = NULL;
+	float* transformedColumn2 = NULL;
+	if (useEncrypted == 1 && useCompressed == 1) {
+		transformedColumn1 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	}
+	else if (useEncrypted == 1 || useCompressed == 1) {
+		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
+	}
+
+	uint32_t epoch_index = 0;
+	for(uint32_t epoch = 0; epoch < numEpochs + (numEpochs/residualUpdatePeriod); epoch++) {
+		double decryption_time = 0;
+		double decompression_time = 0;
+		double dot_product_time = 0;
+		double residual_update_time = 0;
+		double temp_time1, temp_time2, temp_time3;
+		double start = get_time();
+
+		__m256 residual_temp;
+		__m256 a_temp;
+		__m256 b_temp;
+
+		for (uint32_t m = 0; m < numMinibatches; m++) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+
+				if (useEncrypted == 1 && useCompressed == 1) {
+					int32_t compressed_a_offset = 0;
+					if (m > 0)
+						compressed_a_offset = compressed_a_sizes[j][m-1];
+
+					temp_time1 = get_time();
+					decrypt_column(encrypted_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn1);
+					temp_time2 = get_time();
+					decryption_time += (temp_time2-temp_time1);
+					decompress_column((uint32_t*)transformedColumn1, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
+					temp_time3 = get_time();
+					decompression_time += (temp_time3-temp_time2);
+				}
+				else if (useEncrypted == 1) {
+					temp_time1 = get_time();
+					decrypt_column(encrypted_a[j] + m*minibatchSize, minibatchSize, transformedColumn2);
+					temp_time2 = get_time();
+					decryption_time += (temp_time2-temp_time1);
+				}
+				else if (useCompressed == 1) {
+					temp_time1 = get_time();
+					int32_t compressed_a_offset = 0;
+					if (m > 0)
+						compressed_a_offset = compressed_a_sizes[j][m-1];
+					decompress_column(compressed_a[j] + compressed_a_offset, compressed_a_sizes[j][m] - compressed_a_offset, transformedColumn2, toIntegerScaler);
+					temp_time2 = get_time();
+					decompression_time += (temp_time2-temp_time1);
+				}
+				else {
+					transformedColumn2 = a[j] + m*minibatchSize;
+				}
+
+				if ( (epoch+1)%(residualUpdatePeriod+1) == 0 ) {
+					for (uint32_t i = 0; i < minibatchSize; i++) {
+						if (j == 0)
+							residual[m*minibatchSize + i] = x_end[j]*transformedColumn2[i];
+						else
+							residual[m*minibatchSize + i] += x_end[j]*transformedColumn2[i];
+					}
+				}
+				else {
+					temp_time1 = get_time();
+					__m256 gradient = _mm256_setzero_ps();
+					for (uint32_t i = 0; i < minibatchSize; i+=8) {
+						a_temp = _mm256_load_ps(transformedColumn2 + i);
+						b_temp = _mm256_load_ps(b + m*minibatchSize + i);
+						residual_temp = _mm256_load_ps(residual + m*minibatchSize + i);
+
+						residual_temp = _mm256_mul_ps(minusOnes, residual_temp);
+						residual_temp = exp256_ps(residual_temp);
+						residual_temp = _mm256_add_ps(ones, residual_temp);
+						residual_temp = _mm256_div_ps(ones, residual_temp);
+
+						__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
+						gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
+						gradient = _mm256_add_ps(gradient, lambda_temp);
+					}
+					__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
+
+					float stepReduce[8];
+					_mm256_store_ps(stepReduce, step);
+					stepReduce[0] = (stepReduce[0] + 
+									stepReduce[1] + 
+									stepReduce[2] + 
+									stepReduce[3] + 
+									stepReduce[4] + 
+									stepReduce[5] + 
+									stepReduce[6] + 
+									stepReduce[7]);
+
+					__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
+
+					x[m*numFeatures + j] += stepReduce[0];
+
+					temp_time2 = get_time();
+					dot_product_time += (temp_time2-temp_time1);
+
+					for (uint32_t i = 0; i < minibatchSize; i+=8) {
+						a_temp = _mm256_load_ps(transformedColumn2 + i);
+						residual_temp = _mm256_load_ps(residual + m*minibatchSize + i);
+						residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
+
+						_mm256_store_ps(residual + m*minibatchSize + i, residual_temp);
+					}
+
+					temp_time3 = get_time();
+					residual_update_time += (temp_time3-temp_time2);
+				}
+			}
+		}
+
+		if ( (epoch+1)%(residualUpdatePeriod+1) == 0 ) {
+			cout << "--> PERFORMED RESIDUAL UPDATE !!!" << endl;
+		}
+		else {
+			temp_time1 = get_time();
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_end[j] = 0;
+			}
+			for (uint32_t m = 0; m < numMinibatches; m++) {
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					x_end[j] += x[m*numFeatures + j];
+				}
+			}
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_end[j] = x_end[j]/numMinibatches;
+			}
+
+			double end = get_time();
+			cout << "decryption_time: " << decryption_time << endl;
+			cout << "decompression_time: " << decompression_time << endl;
+			cout << "dot_product_time: " << dot_product_time << endl;
+			cout << "residual_update_time: " << residual_update_time << endl;
+			cout << "x_average_time: " << end-temp_time1 << endl;
+			cout << "Time for one epoch: " << end-start << endl;
+
+			if (x_history != NULL) {
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					x_history[epoch_index*numFeatures + j] = x_end[j];
+				}
+				epoch_index++;
+			}
+			else {
+				cout << "Loss " << epoch << ": " << calculate_logreg_loss(x_end, lambda, NULL) << endl;
+				cout << calculate_logreg_accuracy(x_end, 0, numSamples) << " corrects out of " << numSamples << endl;
+			}
+			cout << epoch << endl;
+		}
+	}
+
+	if (useEncrypted == 1 && useCompressed == 1) {
+		free(transformedColumn1);
+		free(transformedColumn2);
+	}
+	else if (useEncrypted == 1 || useCompressed == 1) {
+		free(transformedColumn2);
+	}
+	free(x);
+	free(x_end);
+	free(residual);
+}
+
 typedef struct {
 	pthread_barrier_t* barrier;
 	uint32_t tid;
@@ -1417,6 +1614,9 @@ typedef struct {
 	float* stepsFromThreads;
 	uint32_t numThreads;
 	char doRealSCD;
+	char doLogreg;
+	float lambda;
+	uint32_t residualUpdatePeriod;
 } batch_thread_data;
 
 void* batch_thread(void* args) {
@@ -1428,6 +1628,9 @@ void* batch_thread(void* args) {
 	else
 		scaledStepSize = -r->stepSize/(float)r->minibatchSize;
 	__m256 scaledStepSize_temp = _mm256_set1_ps(scaledStepSize);
+	__m256 lambda_temp = _mm256_set1_ps(r->lambda/(float)r->minibatchSize);
+	__m256 ones = _mm256_set1_ps(1.0);
+	__m256 minusOnes = _mm256_set1_ps(-1.0);
 
 	float* transformedColumn1 = NULL;
 	float* transformedColumn2 = NULL;
@@ -1448,7 +1651,8 @@ void* batch_thread(void* args) {
 	double start, end, epoch_times;
 	epoch_times = 0;
 
-	for(uint32_t epoch = 0; epoch < r->numEpochs; epoch++) {
+	uint32_t epoch_index = 0;
+	for(uint32_t epoch = 0; epoch < r->numEpochs + (r->numEpochs/r->residualUpdatePeriod); epoch++) {
 
 		r->decryption_time = 0;
 		r->decompression_time = 0;
@@ -1508,8 +1712,16 @@ void* batch_thread(void* args) {
 						b_temp = _mm256_load_ps(r->b + m*r->minibatchSize + i);
 						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
 
+						if (r->doLogreg == 1) {
+							residual_temp = _mm256_mul_ps(minusOnes, residual_temp);
+							residual_temp = exp256_ps(residual_temp);
+							residual_temp = _mm256_add_ps(ones, residual_temp);
+							residual_temp = _mm256_div_ps(ones, residual_temp);
+						}
+
 						__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
 						gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
+						gradient = _mm256_add_ps(gradient, lambda_temp);
 					}
 					__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
 
@@ -1602,8 +1814,12 @@ void* batch_thread(void* args) {
 						r->x_history[epoch*r->numFeatures + j] = x_end[j];
 					}
 				}
-				else
-					cout << "Loss " << epoch << ": " << r->app->calculate_linreg_loss(x_end) << endl;
+				else {
+					if (r->doLogreg == 1)
+						cout << "Loss " << epoch << ": " << r->app->calculate_logreg_loss(x_end, r->lambda, NULL) << endl;
+					else
+						cout << "Loss " << epoch << ": " << r->app->calculate_linreg_loss(x_end) << endl;
+				}
 				cout << epoch << endl;
 			}
 		}
@@ -1643,46 +1859,66 @@ void* batch_thread(void* args) {
 						transformedColumn2 = r->a[j] + m*r->minibatchSize;
 					}
 
-					temp_time1 = get_time();
-					__m256 gradient = _mm256_setzero_ps();
-					for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(transformedColumn2 + i);
-						b_temp = _mm256_load_ps(r->b + m*r->minibatchSize + i);
-						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
-
-						__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
-						gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
+					if ( (epoch+1)%(r->residualUpdatePeriod+1) == 0 ) {
+						if (r->tid == 0) {
+							for (uint32_t i = 0; i < r->minibatchSize; i++) {
+								if (j == 0)
+									r->residual[m*r->minibatchSize + i] = x_end[j]*transformedColumn2[i];
+								else
+									r->residual[m*r->minibatchSize + i] += x_end[j]*transformedColumn2[i];
+							}
+						}
 					}
-					__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
+					else {
+						temp_time1 = get_time();
+						__m256 gradient = _mm256_setzero_ps();
+						for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
+							a_temp = _mm256_load_ps(transformedColumn2 + i);
+							b_temp = _mm256_load_ps(r->b + m*r->minibatchSize + i);
+							residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
 
-					float stepReduce[8];
-					_mm256_store_ps(stepReduce, step);
-					stepReduce[0] = (stepReduce[0] + 
-									stepReduce[1] + 
-									stepReduce[2] + 
-									stepReduce[3] + 
-									stepReduce[4] + 
-									stepReduce[5] + 
-									stepReduce[6] + 
-									stepReduce[7]);
+							if (r->doLogreg == 1) {
+								residual_temp = _mm256_mul_ps(minusOnes, residual_temp);
+								residual_temp = exp256_ps(residual_temp);
+								residual_temp = _mm256_add_ps(ones, residual_temp);
+								residual_temp = _mm256_div_ps(ones, residual_temp);
+							}
 
-					__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
+							__m256 error_temp = _mm256_sub_ps(residual_temp, b_temp);
+							gradient = _mm256_fmadd_ps(a_temp, error_temp, gradient);
+							gradient = _mm256_add_ps(gradient, lambda_temp);
+						}
+						__m256 step = _mm256_mul_ps(gradient, scaledStepSize_temp);
 
-					r->x[m*r->numFeatures + j] += stepReduce[0];
+						float stepReduce[8];
+						_mm256_store_ps(stepReduce, step);
+						stepReduce[0] = (stepReduce[0] + 
+										stepReduce[1] + 
+										stepReduce[2] + 
+										stepReduce[3] + 
+										stepReduce[4] + 
+										stepReduce[5] + 
+										stepReduce[6] + 
+										stepReduce[7]);
 
-					temp_time2 = get_time();
-					r->dot_product_time += (temp_time2-temp_time1);
+						__m256 stepReduce_temp = _mm256_set1_ps(stepReduce[0]);
 
-					for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
-						a_temp = _mm256_load_ps(transformedColumn2 + i);
-						residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
-						residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
+						r->x[m*r->numFeatures + j] += stepReduce[0];
 
-						_mm256_store_ps(r->residual + m*r->minibatchSize + i, residual_temp);
+						temp_time2 = get_time();
+						r->dot_product_time += (temp_time2-temp_time1);
+
+						for (uint32_t i = 0; i < r->minibatchSize; i+=8) {
+							a_temp = _mm256_load_ps(transformedColumn2 + i);
+							residual_temp = _mm256_load_ps(r->residual + m*r->minibatchSize + i);
+							residual_temp = _mm256_fmadd_ps(a_temp, stepReduce_temp, residual_temp);
+
+							_mm256_store_ps(r->residual + m*r->minibatchSize + i, residual_temp);
+						}
+
+						temp_time3 = get_time();
+						r->residual_update_time += (temp_time3-temp_time2);
 					}
-
-					temp_time3 = get_time();
-					r->residual_update_time += (temp_time3-temp_time2);
 				}
 			}
 
@@ -1690,30 +1926,40 @@ void* batch_thread(void* args) {
 			temp_time1 = get_time();
 
 			if (r->tid == 0) {
-				for (uint32_t j = 0; j < r->numFeatures; j++) {
-					x_end[j] = 0;
+				if ( (epoch+1)%(r->residualUpdatePeriod+1) == 0 ) {
+					cout << "--> PERFORMED RESIDUAL UPDATE !!!" << endl;
 				}
-				for (uint32_t m = 0; m < r->numMinibatches; m++) {
+				else {
 					for (uint32_t j = 0; j < r->numFeatures; j++) {
-						x_end[j] += r->x[m*r->numFeatures + j];
+						x_end[j] = 0;
 					}
-				}
-				for (uint32_t j = 0; j < r->numFeatures; j++) {
-					x_end[j] = x_end[j]/r->numMinibatches;
-				}
-
-				end = get_time();
-				epoch_times += (end-start);
-				cout << "Time for one epoch: " << end-start << endl;
-
-				if (r->x_history != NULL) {
+					for (uint32_t m = 0; m < r->numMinibatches; m++) {
+						for (uint32_t j = 0; j < r->numFeatures; j++) {
+							x_end[j] += r->x[m*r->numFeatures + j];
+						}
+					}
 					for (uint32_t j = 0; j < r->numFeatures; j++) {
-						r->x_history[epoch*r->numFeatures + j] = x_end[j];
+						x_end[j] = x_end[j]/r->numMinibatches;
 					}
+
+					end = get_time();
+					epoch_times += (end-start);
+					cout << "Time for one epoch: " << end-start << endl;
+
+					if (r->x_history != NULL) {
+						for (uint32_t j = 0; j < r->numFeatures; j++) {
+							r->x_history[epoch_index*r->numFeatures + j] = x_end[j];
+						}
+						epoch_index++;
+					}
+					else {
+						if (r->doLogreg == 1)
+							cout << "Loss " << epoch << ": " << r->app->calculate_logreg_loss(x_end, r->lambda, NULL) << endl;
+						else
+							cout << "Loss " << epoch << ": " << r->app->calculate_linreg_loss(x_end) << endl;
+					}
+					cout << epoch << endl;
 				}
-				else
-					cout << "Loss " << epoch << ": " << r->app->calculate_linreg_loss(x_end) << endl;
-				cout << epoch << endl;
 			}
 		}
 	}
@@ -1733,16 +1979,23 @@ void* batch_thread(void* args) {
 	return NULL;
 }
 
-void scd::AVXmulti_float_linreg_SCD(float* x_history, char doRealSCD, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler) {
+void scd::AVXmulti_float_linlogreg_SCD(float* x_history, char doRealSCD, char doLogreg, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numThreads) {
 	if (minibatchSize%8 == 8) {
 		cout << "For AVX minibatchSize%8 must be 0!" << endl;
 		exit(1);
 	}
+	if (numThreads > MAX_NUM_THREADS) {
+		cout << "numThreads: " << numThreads << " is not possible" << endl;
+		exit(1);
+	}
+	cout << "AVXmulti_float_linlogreg_SCD with " << numThreads << " threads running..." << endl;
+	cout << "useEncrypted: " << useEncrypted << endl;
+	cout << "useCompressed: " << useCompressed << endl;
 
 	pthread_barrier_t barrier;
 	pthread_attr_t attr;
-	pthread_t threads[NUM_THREADS];
-	batch_thread_data args[NUM_THREADS];
+	pthread_t threads[MAX_NUM_THREADS];
+	batch_thread_data args[MAX_NUM_THREADS];
 	cpu_set_t set;
 
 	float* residual = (float*)aligned_alloc(64, numSamples*sizeof(float));
@@ -1755,16 +2008,21 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, char doRealSCD, uint32_t n
 
 	float* x = (float*)aligned_alloc(64, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
 	memset(x, 0, (numMinibatches + numSamples%minibatchSize)*numFeatures*sizeof(float));
-	float stepsFromThreads[NUM_THREADS];
+	float stepsFromThreads[MAX_NUM_THREADS];
 
 	cout << "---------------------------------------" << endl;
-	cout << "Initial loss: " << calculate_linreg_loss(x) << endl;
+	if (doLogreg == 1) {
+		cout << "Initial loss: " << calculate_logreg_loss(x, lambda, NULL) << endl;
+		cout << "Initial accuracy: " << calculate_logreg_accuracy(x, 0, numSamples) << " corrects out of " << numSamples << endl;
+	}
+	else
+		cout << "Initial loss: " << calculate_linreg_loss(x) << endl;
 
 	uint32_t startingBatch = 0;
-	pthread_barrier_init(&barrier, NULL, NUM_THREADS);
+	pthread_barrier_init(&barrier, NULL, numThreads);
 	pthread_attr_init(&attr);
 	CPU_ZERO(&set);
-	for (uint32_t n = 0; n < NUM_THREADS; n++) {
+	for (uint32_t n = 0; n < numThreads; n++) {
 		CPU_SET(n, &set);
 		pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &set);
 
@@ -1776,10 +2034,11 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, char doRealSCD, uint32_t n
 		args[n].residual = residual;
 		args[n].stepSize = stepSize;
 		args[n].startingBatch = startingBatch;
-		if (n == NUM_THREADS-1)
+		uint32_t temp = numMinibatches/numThreads + (numMinibatches%numThreads > 0);
+		if (temp > numMinibatches - startingBatch)
 			args[n].numBatchesToProcess = numMinibatches - startingBatch;
 		else
-			args[n].numBatchesToProcess = numMinibatches/NUM_THREADS;
+			args[n].numBatchesToProcess = temp;
 		args[n].minibatchSize = minibatchSize;
 		args[n].numMinibatches = numMinibatches;
 		args[n].numEpochs = numEpochs;
@@ -1791,13 +2050,19 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, char doRealSCD, uint32_t n
 		args[n].useEncrypted = useEncrypted;
 		args[n].toIntegerScaler = toIntegerScaler;
 		args[n].stepsFromThreads = stepsFromThreads;
-		args[n].numThreads = NUM_THREADS;
+		args[n].numThreads = numThreads;
 		args[n].doRealSCD = doRealSCD;
+		args[n].doLogreg = doLogreg;
+		args[n].lambda = lambda;
+		args[n].residualUpdatePeriod = residualUpdatePeriod;
 
-		pthread_create(&threads[n], &attr, batch_thread, (void*)&args[n]);
 		startingBatch += args[n].numBatchesToProcess;
+		cout << "Thread " << n << ", numBatchesToProcess: " << args[n].numBatchesToProcess << endl;
 	}
-	for (uint32_t n = 0; n < NUM_THREADS; n++) {
+	for (uint32_t n = 0; n < numThreads; n++) {
+		pthread_create(&threads[n], &attr, batch_thread, (void*)&args[n]);
+	}
+	for (uint32_t n = 0; n < numThreads; n++) {
 		pthread_join(threads[n], NULL);
 	}
 
@@ -1805,21 +2070,20 @@ void scd::AVXmulti_float_linreg_SCD(float* x_history, char doRealSCD, uint32_t n
 	double decompression_time = 0;
 	double dot_product_time = 0;
 	double residual_update_time = 0;
-	for (uint32_t n = 0; n < NUM_THREADS; n++) {
+	for (uint32_t n = 0; n < numThreads; n++) {
 		decryption_time += args[n].decryption_time;
 		decompression_time += args[n].decompression_time;
 		dot_product_time += args[n].dot_product_time;
 		residual_update_time += args[n].residual_update_time;
 	}
-	cout << "decryption_time: " << decryption_time/NUM_THREADS << endl;
-	cout << "decompression_time: " << decompression_time/NUM_THREADS << endl;
-	cout << "dot_product_time: " << dot_product_time/NUM_THREADS << endl;
-	cout << "residual_update_time: " << residual_update_time/NUM_THREADS << endl;
+	cout << "decryption_time: " << decryption_time/numThreads << endl;
+	cout << "decompression_time: " << decompression_time/numThreads << endl;
+	cout << "dot_product_time: " << dot_product_time/numThreads << endl;
+	cout << "residual_update_time: " << residual_update_time/numThreads << endl;
 
 	free(x);
 	free(residual);
 }
-
 
 void* justread_thread(void* args) {
 	batch_thread_data* r = (batch_thread_data*)args;
@@ -1903,8 +2167,8 @@ void* justread_thread(void* args) {
 
 double scd::AVXmulti_justread(uint32_t minibatchSize, char useEncrypted, char useCompressed) {
 	pthread_attr_t attr;
-	pthread_t threads[NUM_THREADS];
-	batch_thread_data args[NUM_THREADS];
+	pthread_t threads[MAX_NUM_THREADS];
+	batch_thread_data args[MAX_NUM_THREADS];
 	cpu_set_t set;
 
 	uint32_t numMinibatches = numSamples/minibatchSize;
@@ -1915,7 +2179,7 @@ double scd::AVXmulti_justread(uint32_t minibatchSize, char useEncrypted, char us
 	uint32_t startingBatch = 0;
 	pthread_attr_init(&attr);
 	CPU_ZERO(&set);
-	for (uint32_t n = 0; n < NUM_THREADS; n++) {
+	for (uint32_t n = 0; n < MAX_NUM_THREADS; n++) {
 		CPU_SET(n, &set);
 		pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &set);
 
@@ -1923,10 +2187,10 @@ double scd::AVXmulti_justread(uint32_t minibatchSize, char useEncrypted, char us
 		args[n].a = a;
 		args[n].app = this;
 		args[n].startingBatch = startingBatch;
-		if (n == NUM_THREADS-1)
+		if (n == MAX_NUM_THREADS-1)
 			args[n].numBatchesToProcess = numMinibatches - startingBatch;
 		else
-			args[n].numBatchesToProcess = numMinibatches/NUM_THREADS + (numMinibatches%NUM_THREADS > 0);
+			args[n].numBatchesToProcess = numMinibatches/MAX_NUM_THREADS + (numMinibatches%MAX_NUM_THREADS > 0);
 		args[n].minibatchSize = minibatchSize;
 		args[n].useEncrypted = useEncrypted;
 		args[n].useCompressed = useCompressed;
@@ -1935,10 +2199,10 @@ double scd::AVXmulti_justread(uint32_t minibatchSize, char useEncrypted, char us
 		startingBatch += args[n].numBatchesToProcess;
 	}
 	double start = get_time();
-	for (uint32_t n = 0; n < NUM_THREADS; n++) {
+	for (uint32_t n = 0; n < MAX_NUM_THREADS; n++) {
 		pthread_create(&threads[n], &attr, justread_thread, (void*)&args[n]);
 	}
-	for (uint32_t n = 0; n < NUM_THREADS; n++) {
+	for (uint32_t n = 0; n < MAX_NUM_THREADS; n++) {
 		pthread_join(threads[n], NULL);
 	}
 	double total = get_time() - start;
@@ -1950,14 +2214,14 @@ double scd::AVXmulti_justread(uint32_t minibatchSize, char useEncrypted, char us
 	double decompression_time = 0;
 	double dot_product_time = 0;
 	double residual_update_time = 0;
-	for (uint32_t n = 0; n < NUM_THREADS; n++) {
+	for (uint32_t n = 0; n < MAX_NUM_THREADS; n++) {
 		decryption_time += args[n].decryption_time;
 		decompression_time += args[n].decompression_time;
 		dot_product_time += args[n].dot_product_time;
 		residual_update_time += args[n].residual_update_time;
 	}
-	cout << "decryption_time: " << decryption_time/NUM_THREADS << endl;
-	cout << "decompression_time: " << decompression_time/NUM_THREADS << endl;
+	cout << "decryption_time: " << decryption_time/MAX_NUM_THREADS << endl;
+	cout << "decompression_time: " << decompression_time/MAX_NUM_THREADS << endl;
 
 	return total;
 }
@@ -2435,10 +2699,10 @@ float scd::calculate_linreg_loss(float* x) {
 	return loss;
 }
 
-uint32_t scd::calculate_logreg_accuracy(float* x) {
+uint32_t scd::calculate_logreg_accuracy(float* x, uint32_t startIndex, uint32_t length) {
 	uint32_t corrects = 0;
 	uint32_t positives = 0;
-	for(uint32_t i = 0; i < numSamples; i++) {
+	for(uint32_t i = startIndex; i < startIndex+length; i++) {
 		float dot = 0.0;
 		for (uint32_t j = 0; j < numFeatures; j++) {
 			dot += x[j]*a[j][i];

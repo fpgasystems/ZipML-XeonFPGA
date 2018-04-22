@@ -53,10 +53,9 @@ int main(int argc, char* argv[]) {
 		miniBatchSize = atoi(argv[6]);
 	}
 
-	uint32_t SGD_stepSizeShifter = 1;
+	uint32_t SGD_stepSizeShifter = 2;
 	uint32_t SCD_stepSizeShifter = 1;
 	uint32_t numEpochs = 1000;
-	uint32_t numMinibatchesAtATime = 1;
 	float lambda = 0.01;
 
 	scd scd_app(0);
@@ -71,17 +70,18 @@ int main(int argc, char* argv[]) {
 
 	scd_app.print_samples(3);
 
-	// uint32_t numModels = 30;
-	// float xM[numModels*scd_app.numFeatures];
-	// scd_app.AdaBoost(xM, numModels, numEpochs, miniBatchSize, 1.0/(1 << SGD_stepSizeShifter), lambda);
-
 	float* x_history = (float*)malloc(scd_app.numFeatures*numEpochs*sizeof(float));
-	
-	// scd_app.float_logreg_SGD(x_history, numEpochs, miniBatchSize,  1.0/(1 << SGD_stepSizeShifter), lambda, NULL);
 
-	scd_app.float_logreg_SCD(x_history, numEpochs, numSamples, 1000, 1.0/(1 << SCD_stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER);
+	// scd_app.float_logreg_SGD(x_history, numEpochs, 16, 1.0/(1 << SGD_stepSizeShifter), lambda, NULL);
+	// scd_app.float_logreg_SCD(x_history, numEpochs, miniBatchSize, 20, 1.0/(1 << SCD_stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER);
+	// scd_app.AVX_float_logreg_SCD(x_history, numEpochs, numSamples, numEpochs+1, 1.0/(1 << SCD_stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER);
+	// scd_app.AVX_float_logreg_SCD(x_history, numEpochs, miniBatchSize, 10, 1.0/(1 << SCD_stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER);
+	scd_app.AVXmulti_float_linlogreg_SCD(x_history, 0, 1, numEpochs, miniBatchSize, 100, 1.0/(1 << SCD_stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER, 14);
 
-	// scd_app.float_logreg_SCD(NULL, numEpochs*10, miniBatchSize, 10, 1.0/(1 << SCD_stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER);
+	for (uint32_t i = 0; i < numEpochs; i+=10) {
+		cout << scd_app.calculate_logreg_loss(((float*)x_history) + i*scd_app.numFeatures, lambda, NULL) << endl;
+		// cout << "accuracy: " << scd_app.calculate_logreg_accuracy(((float*)x_history) + i*scd_app.numFeatures, 0, scd_app.numSamples) << endl;
+	}
 
 	scd_app.load_raw_data(pathToTestDataset, numTestSamples, numFeatures, 0);
 	scd_app.print_samples(3);

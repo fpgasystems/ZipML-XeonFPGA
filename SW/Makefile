@@ -15,7 +15,7 @@
 #*************************************************************************
 
 CXX			= g++
-CPPFLAGS	= -O3 -std=c++11 -march=native -Wall -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-reorder -g
+CPPFLAGS	= -O3 -std=c++11 -march=native -Wall -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-reorder -Wno-narrowing -DAVX2
 LDFLAGS		= -lpthread -lOSAL -lAAS
 COMMON		= ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp 
 
@@ -23,10 +23,13 @@ COMMON		= ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp
 
 all: all_scd_tests
 
-all_scd_tests:  ./tests/fscd_test_synthetic.cpp ./tests/fscd_test_raw.cpp ./tests/prediction_test.cpp $(COMMON) ./src/scd.h
-	$(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/fscd_test_synthetic.cpp $(COMMON) -o fscd_test_synthetic -L$(AALSDK)/lib $(LDFLAGS) -laalrt
-	$(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/fscd_test_raw.cpp $(COMMON) -o fscd_test_raw -L$(AALSDK)/lib $(LDFLAGS) -laalrt
-	$(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/prediction_test.cpp $(COMMON) -o prediction_test -L$(AALSDK)/lib $(LDFLAGS) -laalrt
+all_scd_tests:  ./tests/scratch.cpp ./tests/cpu_test_synthetic.cpp ./tests/fscd_test_synthetic.cpp ./tests/fscd_test_raw.cpp ./tests/prediction_test.cpp ./tests/scd_vs_miniscd_test.cpp $(COMMON) ./src/scd.h
+	# $(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/scratch.cpp $(COMMON) -o scratch -L$(AALSDK)/lib $(LDFLAGS) -laalrt
+	$(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/cpu_test_synthetic.cpp $(COMMON) -o cpu_test_synthetic -L$(AALSDK)/lib $(LDFLAGS) -laalrt
+	# $(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/fscd_test_synthetic.cpp $(COMMON) -o fscd_test_synthetic -L$(AALSDK)/lib $(LDFLAGS) -laalrt
+	# $(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/fscd_test_raw.cpp $(COMMON) -o fscd_test_raw -L$(AALSDK)/lib $(LDFLAGS) -laalrt
+	# $(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/prediction_test.cpp $(COMMON) -o prediction_test -L$(AALSDK)/lib $(LDFLAGS) -laalrt
+	# $(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/scd_vs_miniscd_test.cpp $(COMMON) -o scd_vs_miniscd_test -L$(AALSDK)/lib $(LDFLAGS) -laalrt
 
 sgd_test: ./tests/sgd_test.cpp ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp ./src/zipml_sgd.h
 	$(CXX) -D HARPv1 -I$(AALSDK)/include $(CPPFLAGS) ./tests/sgd_test.cpp ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp -o sgd_test -L$(AALSDK)/lib $(LDFLAGS) -lxlrt
@@ -35,6 +38,9 @@ zipml: ./tests/main.cpp ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp
 	$(CXX) -D HARPv1 -I$(AALSDK)/include $(CPPFLAGS) ./tests/main.cpp ./driver/iFPGA.cpp ./driver/RuntimeClient.cpp -o zipmlfpga -L$(AALSDK)/lib $(LDFLAGS) -lxlrt
 
 clean:
+	rm scratch
+	rm cpu_test_synthetic
 	rm fscd_test_synthetic
 	rm fscd_test_raw
 	rm prediction_test
+	rm scd_vs_miniscd_test

@@ -43,26 +43,23 @@ int main(int argc, char* argv[]) {
 	uint32_t useEncryption = 0;
 	uint32_t useCompression = 0;
 	char doRealSCD = 0;
-	if (argc != 8) {
-		cout << "Usage: ./app <numSamples> <numFeatures> <miniBatchSize> <f_instances> <encrypt> <compress> <realSCD>" << endl;
+	if (argc != 4) {
+		cout << "Usage: ./app <numSamples> <numFeatures> <miniBatchSize>" << endl;
 		return 0;
 	}
 	else {
 		numSamples = atoi(argv[1]);
 		numFeatures = atoi(argv[2]);
 		miniBatchSize = atoi(argv[3]);
-		numInstances = atoi(argv[4]);
-		useEncryption = atoi(argv[5]);
-		useCompression = atoi(argv[6]);
-		doRealSCD = (char)atoi(argv[7]);
 	}
 
 	uint32_t stepSizeShifter = 2;
 	uint32_t numEpochs = 5;
 	uint32_t numMinibatchesAtATime = 1;
 	uint32_t residualUpdatePeriod = 100;
+	float lambda = 0.1;
 
-	scd scd_app(1);
+	scd scd_app(0);
 
 	scd_app.generate_synthetic_data(numSamples, numFeatures, 0);
 
@@ -76,15 +73,15 @@ int main(int argc, char* argv[]) {
 		scd_app.encrypt_a(miniBatchSize, useCompression);
 	}
 
-	if (doRealSCD == 1) {
-		scd_app.float_linreg_SCD(NULL, numEpochs, numSamples, numMinibatchesAtATime, residualUpdatePeriod, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
-		scd_app.AVX_float_linreg_SCD(NULL, numEpochs, numSamples, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
-	}
-	else {
-		scd_app.float_linreg_SCD(NULL, numEpochs, miniBatchSize, numMinibatchesAtATime, residualUpdatePeriod, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
-		scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER);
-	}
-	scd_app.AVXmulti_float_linreg_SCD(NULL, doRealSCD, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), useEncryption, useCompression, VALUE_TO_INT_SCALER, 14);
-	
-	scd_app.float_linreg_FSCD(NULL, doRealSCD, numEpochs, miniBatchSize, residualUpdatePeriod, 1.0/(1 << stepSizeShifter), 0, useEncryption, useCompression, VALUE_TO_INT_SCALER, numInstances);
+	// scd_app.float_logreg_SCD(NULL, numEpochs, miniBatchSize, 100, 1.0/(1 << stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER);
+
+	scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
+
+	scd_app.AVX_float_logreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER);
+
+	scd_app.AVXmulti_float_linlogreg_SCD(NULL, doRealSCD, 0, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), lambda, useEncryption, useCompression, VALUE_TO_INT_SCALER, 14);
+
+	scd_app.AVXmulti_float_linlogreg_SCD(NULL, doRealSCD, 1, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), lambda, useEncryption, useCompression, VALUE_TO_INT_SCALER, 14);
+
+
 }
