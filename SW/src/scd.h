@@ -208,14 +208,14 @@ public:
 #ifdef AVX2
 	void AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 	void AVX_float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
-	void AVXmulti_float_linlogreg_SCD(float* x_history, char doRealSCD, char doLogreg, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numThreads);
+	double AVXmulti_float_linlogreg_SCD(float* x_history, char doRealSCD, char doLogreg, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numThreads);
 	double AVXmulti_justread(uint32_t minibatchSize, char useEncrypted, char useCompressed);
 #endif
 
 	uint32_t print_FPGA_memory();
 	uint32_t copy_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs, char useEncrypted);
 	uint32_t copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uint32_t minibatchSize, uint32_t numMinibatchesToAssign[], uint32_t numEpochs, char useEncrypted);
-	void float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse);
+	double float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse);
 	
 	uint32_t decompress_column(uint32_t* compressedColumn, uint32_t inNumWords, float* decompressedColumn, uint32_t toIntegerScaler);
 	uint32_t compress_column(float* originalColumn, uint32_t inNumWords, uint32_t* compressedColumn, uint32_t toIntegerScaler);
@@ -227,9 +227,6 @@ public:
 void scd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures) {
 	cout << "Reading " << pathToFile << endl;
 
-	numSamples = _numSamples;
-	numFeatures = _numFeatures+1; // For the bias term
-
 	if (a != NULL) {
 		cout << "Freeing a..." << endl;
 		for (uint32_t j = 0; j < numFeatures; j++) {
@@ -237,6 +234,10 @@ void scd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _num
 		}
 		free(a);
 	}
+
+	numSamples = _numSamples;
+	numFeatures = _numFeatures+1; // For the bias term
+
 	a = (float**)malloc(numFeatures*sizeof(float*));
 	for (uint32_t j = 0; j < numFeatures; j++) {
 		a[j] = (float*)aligned_alloc(64, numSamples*sizeof(float));
@@ -296,9 +297,6 @@ void scd::load_libsvm_data(char* pathToFile, uint32_t _numSamples, uint32_t _num
 void scd::load_raw_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFeatures, char labelPresent) {
 	cout << "Reading " << pathToFile << endl;
 
-	numSamples = _numSamples;
-	numFeatures = _numFeatures+1;
-
 	if (a != NULL) {
 		cout << "Freeing a..." << endl;
 		for (uint32_t j = 0; j < numFeatures; j++) {
@@ -306,6 +304,10 @@ void scd::load_raw_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFea
 		}
 		free(a);
 	}
+
+	numSamples = _numSamples;
+	numFeatures = _numFeatures+1;
+
 	a = (float**)malloc(numFeatures*sizeof(float*));
 	for (uint32_t j = 0; j < numFeatures; j++) {
 		a[j] = (float*)aligned_alloc(64, numSamples*sizeof(float));
@@ -357,11 +359,19 @@ void scd::load_raw_data(char* pathToFile, uint32_t _numSamples, uint32_t _numFea
 }
 
 void scd::generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, char binary) {
+	
+	if (a != NULL) {
+		cout << "Freeing a..." << endl;
+		for (uint32_t j = 0; j < numFeatures; j++) {
+			free(a[j]);
+		}
+		free(a);
+		cout << "a freed..." << endl;
+	}
+
 	numSamples = _numSamples;
 	numFeatures = _numFeatures;
 
-	if (a != NULL)
-		free(a);
 	a = (float**)malloc(numFeatures*sizeof(float*));
 	for (uint32_t j = 0; j < numFeatures; j++) {
 		a[j] = (float*)aligned_alloc(64, numSamples*sizeof(float));
@@ -397,7 +407,6 @@ void scd::generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, c
 	cout << "numSamples: " << numSamples << endl;
 	cout << "numFeatures: " << numFeatures << endl;
 }
-
 
 void scd::a_normalize(char toMinus1_1, char rowOrColumnWise, float* a_min, float* a_range) {
 	a_normalizedToMinus1_1 = toMinus1_1;
@@ -1617,6 +1626,7 @@ typedef struct {
 	char doLogreg;
 	float lambda;
 	uint32_t residualUpdatePeriod;
+	double avg_epoch_time;
 } batch_thread_data;
 
 void* batch_thread(void* args) {
@@ -1928,6 +1938,10 @@ void* batch_thread(void* args) {
 			if (r->tid == 0) {
 				if ( (epoch+1)%(r->residualUpdatePeriod+1) == 0 ) {
 					cout << "--> PERFORMED RESIDUAL UPDATE !!!" << endl;
+
+					end = get_time();
+					epoch_times += (end-start);
+					cout << "Time for one global residual update: " << end-start << endl;
 				}
 				else {
 					for (uint32_t j = 0; j < r->numFeatures; j++) {
@@ -1963,8 +1977,10 @@ void* batch_thread(void* args) {
 			}
 		}
 	}
-	if (r->tid == 0)
-		cout << "avg epoch time: " << epoch_times/r->numEpochs << endl;
+	if (r->tid == 0){
+		r->avg_epoch_time = epoch_times/r->numEpochs;
+		cout << "avg epoch time: " << r->avg_epoch_time << endl;
+	}
 
 	if (r->useEncrypted == 1 && r->useCompressed == 1) {
 		free(transformedColumn1);
@@ -1979,7 +1995,7 @@ void* batch_thread(void* args) {
 	return NULL;
 }
 
-void scd::AVXmulti_float_linlogreg_SCD(float* x_history, char doRealSCD, char doLogreg, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numThreads) {
+double scd::AVXmulti_float_linlogreg_SCD(float* x_history, char doRealSCD, char doLogreg, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numThreads) {
 	if (minibatchSize%8 == 8) {
 		cout << "For AVX minibatchSize%8 must be 0!" << endl;
 		exit(1);
@@ -2083,6 +2099,8 @@ void scd::AVXmulti_float_linlogreg_SCD(float* x_history, char doRealSCD, char do
 
 	free(x);
 	free(residual);
+
+	return args[0].avg_epoch_time;
 }
 
 void* justread_thread(void* args) {
@@ -2401,7 +2419,7 @@ uint32_t scd::copy_compressed_data_into_FPGA_memory(uint32_t numMinibatches, uin
 	return step_address[0]*numValuesPerLine;
 }
 
-void scd::float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse) {
+double scd::float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, char enableStaleness, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numInstancesToUse) {
 	uint32_t numMinibatches = numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
 	uint32_t rest = numSamples - numMinibatches*minibatchSize;
@@ -2507,17 +2525,14 @@ void scd::float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs
 			}
 
 			interfaceFPGA->startTransaction();
+			interfaceFPGA->joinTransaction();
 
 			memset(index, 0, NUM_FINSTANCES*sizeof(uint32_t));
 			for (uint32_t e = 0; e < residualUpdatePeriod; e++) {
 				for (uint32_t n = 0; n < numInstancesToUse; n++) {
 					for (uint32_t m = 0; m < numMinibatchesToAssign[n]; m++) {
 						for (uint32_t j = 0; j < numFeatures; j++) {
-							float value = 0;
-							while (value == 0) {
-								value = interfaceFPGA->readFromMemoryFloat('i', step_address[n]*numValuesPerLine+index[n]);
-								SleepNano(100);
-							}
+							float value = interfaceFPGA->readFromMemoryFloat('i', step_address[n]*numValuesPerLine+index[n]);
 							interfaceFPGA->writeToMemoryFloat('i', 0, step_address[n]*numValuesPerLine+index[n]);
 							x[j] -= value;
 							index[n]++;
@@ -2530,8 +2545,6 @@ void scd::float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs
 					x_history_local[(epoch+e)*numFeatures+j] = x[j]/numMinibatches;
 				}
 			}
-
-			interfaceFPGA->joinTransaction();
 
 			for (uint32_t n = 0; n < numInstancesToUse; n++) {
 				for (uint32_t j = 0; j < numFeatures; j++) {
@@ -2575,6 +2588,7 @@ void scd::float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs
 	double end = get_time();
 	cout << "Time for all epochs on the FPGA: " << end-start << endl;
 	cout << "Time for one epoch on the FPGA: " << (end-start)/numEpochs << endl;
+	double epoch_time = (end-start)/numEpochs;
 
 	memset(index, 0, NUM_FINSTANCES*sizeof(uint32_t));
 	if (doRealSCD == 0) {
@@ -2628,6 +2642,8 @@ void scd::float_linreg_FSCD(float* x_history, char doRealSCD, uint32_t numEpochs
 	}
 
 	free(x_history_local);
+
+	return epoch_time;
 }
 
 float scd::calculate_l2svm_loss(float* x, float costPos, float costNeg, float lambda) {
