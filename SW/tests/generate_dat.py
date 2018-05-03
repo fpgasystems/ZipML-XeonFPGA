@@ -51,19 +51,23 @@ args = parser.parse_args()
 samples = []
 
 cats = [
-282
-# ,281
+281 	# 'tabby, tabby cat',
+,282 	# 'tiger cat',
+,283 	# 'Persian cat',
+,284 	# 'Siamese cat, Siamese',
 ]
 samples.extend( reformat_features(args.features_dir, cats, 0) )
 
 dogs = [
-235
-# ,153
+153		# 'Maltese dog, Maltese terrier, Maltese',
+,235	# 'German shepherd, German shepherd dog, German police dog, alsatian',
+,230	# 'Shetland sheepdog, Shetland sheep dog, Shetland',
+,238	# 'Greater Swiss Mountain dog',
 ]
 samples.extend( reformat_features(args.features_dir, dogs, 1) )
 
-# print('Shuffling...')
-# shuffle(samples)
+print('Shuffling...')
+shuffle(samples)
 
 samples = np.asarray(samples)
 
