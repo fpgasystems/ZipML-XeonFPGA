@@ -38,50 +38,52 @@ int main(int argc, char* argv[]) {
 	char* pathToDataset;
 	uint32_t numSamples;
 	uint32_t numFeatures;
-	uint32_t miniBatchSize = 512;
+	uint32_t minibatchSize = 512;
+	uint32_t numMinibatchesAtATime = 1;
 	uint32_t numInstances = 1;
 	uint32_t useEncryption = 0;
 	uint32_t useCompression = 0;
 	char doRealSCD = 0;
-	if (argc != 4) {
-		cout << "Usage: ./app <numSamples> <numFeatures> <miniBatchSize>" << endl;
+	if (argc != 6) {
+		cout << "Usage: ./app <pathToDataset> <numSamples> <numFeatures> <miniBatchSize> <numMinibatchesAtATime>" << endl;
 		return 0;
 	}
 	else {
-		numSamples = atoi(argv[1]);
-		numFeatures = atoi(argv[2]);
-		miniBatchSize = atoi(argv[3]);
+		pathToDataset = argv[1];
+		numSamples = atoi(argv[2]);
+		numFeatures = atoi(argv[3]);
+		minibatchSize = atoi(argv[4]);
+		numMinibatchesAtATime = atoi(argv[5]);
 	}
 
-	uint32_t stepSizeShifter = 2;
-	uint32_t numEpochs = 5;
-	uint32_t numMinibatchesAtATime = 1;
+	uint32_t stepSizeShifter = 12;
+	uint32_t numEpochs = 20;
 	uint32_t residualUpdatePeriod = 100;
 	float lambda = 0.1;
 
 	scd scd_app(0);
 
-	scd_app.generate_synthetic_data(numSamples, numFeatures, 0);
+	scd_app.load_raw_data(pathToDataset, numSamples, numFeatures, 1);
 
 	scd_app.print_samples(2);
 
-	if (useCompression == 1) {
-		float compressionRate = scd_app.compress_a(miniBatchSize, VALUE_TO_INT_SCALER);
-		cout << "compressionRate: " << compressionRate << endl;
+	float x_history[numEpochs*scd_app.numFeatures];
+	scd_app.float_logreg_blockwise_SGD(x_history, numEpochs, minibatchSize, numMinibatchesAtATime, 1.0/(1 << stepSizeShifter), lambda);
+	cout << "-----------------------------------------" << endl;
+	cout << "Loss: " << endl;
+	for (uint32_t e = 0; e < numEpochs; e++) {
+		cout << scd_app.calculate_logreg_loss(x_history + e*scd_app.numFeatures, lambda, NULL) << endl;
 	}
-	if (useEncryption == 1) {
-		scd_app.encrypt_a(miniBatchSize, useCompression);
-	}
 
-	// scd_app.float_logreg_SCD(NULL, numEpochs, miniBatchSize, 100, 1.0/(1 << stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER);
+	// for (uint32_t p = 0; p < 7; p++) {	
+	// 	scd_app.float_logreg_blockwise_SGD(x_history, numEpochs, minibatchSize, (1 << p), 1.0/(1 << stepSizeShifter), lambda);
+	// 	cout << "-----------------------------------------" << endl;
+	// 	cout << "p: " << p << endl;
+	// 	cout << "Loss: " << endl;
+	// 	for (uint32_t e = 0; e < numEpochs; e++) {
+	// 		cout << scd_app.calculate_logreg_loss(x_history + e*scd_app.numFeatures, lambda, NULL) << endl;
+	// 	}
+	// }
 
-	scd_app.AVX_float_linreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
-
-	scd_app.AVX_float_logreg_SCD(NULL, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER);
-
-	scd_app.AVXmulti_float_linlogreg_SCD(NULL, doRealSCD, 0, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), lambda, useEncryption, useCompression, VALUE_TO_INT_SCALER, 14);
-
-	scd_app.AVXmulti_float_linlogreg_SCD(NULL, doRealSCD, 1, numEpochs, miniBatchSize, 1.0/(1 << stepSizeShifter), lambda, useEncryption, useCompression, VALUE_TO_INT_SCALER, 14);
-
-
+	return 0;
 }

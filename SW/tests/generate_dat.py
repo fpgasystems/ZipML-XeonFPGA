@@ -45,6 +45,9 @@ parser.add_argument(
 	type=str,
 	default='',
 	help='Absolute path to features directory.')
+parser.add_argument(
+	'--shuffle',
+	type=int)
 
 args = parser.parse_args()
 
@@ -55,6 +58,8 @@ cats = [
 ,282 	# 'tiger cat',
 ,283 	# 'Persian cat',
 ,284 	# 'Siamese cat, Siamese',
+,285	# 'Egyptian cat',
+,383	# 'Madagascar cat, ring-tailed lemur, Lemur catta',
 ]
 samples.extend( reformat_features(args.features_dir, cats, 0) )
 
@@ -63,16 +68,24 @@ dogs = [
 ,235	# 'German shepherd, German shepherd dog, German police dog, alsatian',
 ,230	# 'Shetland sheepdog, Shetland sheep dog, Shetland',
 ,238	# 'Greater Swiss Mountain dog',
+,200	# 'Tibetan terrier, chrysanthemum dog',
+,230	# 'Shetland sheepdog, Shetland sheep dog, Shetland',
 ]
 samples.extend( reformat_features(args.features_dir, dogs, 1) )
 
-print('Shuffling...')
-shuffle(samples)
+if args.shuffle == 1:
+	print('Shuffling...')
+	shuffle(samples)
 
 samples = np.asarray(samples)
 
 print('samples.shape: ' + str(samples.shape) )
 
-f_out = open(args.features_dir + '/cats_vs_dogs_' + str(samples.shape[0]) + '_' + str(samples.shape[1]), 'w');
+if args.shuffle == 1:
+	file_name = args.features_dir + '/cats_vs_dogs_' + str(samples.shape[0]) + '_' + str(samples.shape[1])
+else:
+	file_name = args.features_dir + '/cats_vs_dogs_' + str(samples.shape[0]) + '_' + str(samples.shape[1]) + '_nonshuffle'
+
+f_out = open(file_name, 'w');
 samples.tofile(f_out)
 f_out.close()

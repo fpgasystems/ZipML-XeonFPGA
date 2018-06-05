@@ -202,6 +202,7 @@ public:
 	void float_l2svm_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float costPos, float costNeg, float lambda);
 	void AdaBoost(float* xM, uint32_t numModels, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda);
 	void float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float lambda, float* sampleWeights);
+	void float_logreg_blockwise_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, float stepSize, float lambda);
 	void float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float* sampleWeights);
 	void float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 	void float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, uint32_t residualUpdatePeriod, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
@@ -776,6 +777,120 @@ void scd::float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 
 	free(x);
 	free(gradient);
+}
+
+void scd::float_logreg_blockwise_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, float stepSize, float lambda) {
+	float* x = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(x, 0, numFeatures*sizeof(float));
+	float* gradient = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(gradient, 0, numFeatures*sizeof(float));
+	float** sampleblocks = (float**)malloc(minibatchSize*numMinibatchesAtATime*sizeof(float*));
+	for (uint32_t i = 0; i < minibatchSize*numMinibatchesAtATime; i++){
+		sampleblocks[i] = (float*)aligned_alloc(64, (numFeatures+1)*sizeof(float));
+	}
+
+	cout << "Initial loss: " << calculate_logreg_loss(x, lambda, NULL) << endl;
+	cout << "Initial accuracy: " << calculate_logreg_accuracy(x, 0, numSamples) << " corrects out of " << numSamples << endl;
+
+	uint32_t numMinibatches = numSamples/minibatchSize;
+	cout << "numMinibatches: " << numMinibatches << endl;
+	uint32_t rest = numSamples - numMinibatches*minibatchSize;
+	cout << "rest: " << rest << endl;
+
+	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
+
+		uint32_t minibatchIndex[numMinibatches];
+		for (uint32_t k = 0; k < numMinibatches; k++) {
+			minibatchIndex[k] = k;
+		}
+		for (uint32_t k = 0; k < numMinibatches; k++) {
+			uint32_t temp_index = rand()%numMinibatches;
+			uint32_t temp = minibatchIndex[k];
+			minibatchIndex[k] = minibatchIndex[temp_index];
+			minibatchIndex[temp_index] = temp;
+		}
+		// for (uint32_t k = 0; k < numMinibatches; k++) {
+		// 	cout << k << ": " << minibatchIndex[k] << endl;
+		// }
+
+		double start = get_time();
+
+		uint32_t numMinibatchesProcessed = 0;
+		uint32_t numMinibatchesToProcess = 0;
+		while( numMinibatchesProcessed < numMinibatches ) {
+			numMinibatchesToProcess = numMinibatchesAtATime;
+			if (numMinibatchesProcessed + numMinibatchesToProcess > numMinibatches)
+				numMinibatchesToProcess = numMinibatches - numMinibatchesProcessed;
+
+			cout << "----------------------------------------------------" << endl;
+			cout << "numMinibatchesProcessed: " << numMinibatchesProcessed << endl;
+			cout << "numMinibatchesToProcess: " << numMinibatchesToProcess << endl;
+
+			for (uint32_t m = 0; m < numMinibatchesToProcess; m++) {
+				uint32_t offset = minibatchIndex[numMinibatchesProcessed + m]*minibatchSize;
+
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					for (uint32_t i = 0; i < minibatchSize; i++) {
+						sampleblocks[m*minibatchSize + i][j+1] = a[j][offset + i];
+					}
+				}
+				for (uint32_t i = 0; i < minibatchSize; i++) {
+					sampleblocks[m*minibatchSize + i][0] = b[offset + i];
+				}
+			}
+
+			uint32_t numSamplesToProcess = numMinibatchesToProcess*minibatchSize;
+			uint32_t sampleIndex[numSamplesToProcess];
+			for (uint32_t i = 0; i < numSamplesToProcess; i++) {
+				sampleIndex[i] = i;
+			}
+			for (uint32_t i = 0; i < numSamplesToProcess; i++) {
+				uint32_t temp_index = rand()%numSamplesToProcess;
+				uint32_t temp = sampleIndex[i];
+				sampleIndex[i] = sampleIndex[temp_index];
+				sampleIndex[temp_index] = temp;
+			}
+
+			double stamp1 = get_time();
+
+			for (uint32_t i = 0; i < numSamplesToProcess; i++) {
+				float dot = 0;
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					dot += x[j]*sampleblocks[sampleIndex[i]][j+1];
+				}
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					gradient[j] = ((1/(1+exp(-dot))) - sampleblocks[sampleIndex[i]][0])*sampleblocks[sampleIndex[i]][j+1];
+					x[j] -= (stepSize/(float)(epoch+1))*(gradient[j] + lambda*x[j]);
+				}
+			}
+
+			cout << "Gradient compute time: " << get_time() - stamp1 << endl;
+
+			numMinibatchesProcessed += numMinibatchesToProcess;
+		}		
+
+		double end = get_time();
+		cout << "Time for one epoch: " << end-start << endl;
+
+		if (x_history != NULL) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_history[epoch*numFeatures + j] = x[j];
+			}
+		}
+		
+		cout << "Loss " << epoch << ": " << calculate_logreg_loss(x, lambda, NULL) << endl;
+		uint32_t accuracy = calculate_logreg_accuracy(x, 0, numSamples);
+		cout << accuracy << " corrects out of " << numSamples << endl;
+
+		cout << epoch << endl;
+	}
+
+	free(x);
+	free(gradient);
+	for (uint32_t i = 0; i < minibatchSize*numMinibatchesAtATime; i++) {
+		free(sampleblocks[i]);
+	}
+	free(sampleblocks);
 }
 
 void scd::float_linreg_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, float* sampleWeights) {
