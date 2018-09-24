@@ -59,6 +59,8 @@ public:
 	unsigned char ivec[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 
 	scd(char getFPGA){
+		srand(101);
+
 		page_size_in_cache_lines = 65536; // 65536 x 64B = 4 MB
 		pages_to_allocate = 1024;
 		numValuesPerLine = 16;
@@ -208,6 +210,7 @@ public:
 	void float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 	void float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, uint32_t residualUpdatePeriod, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 #ifdef AVX2
+	void AVX_float_logreg_blockwise_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, float stepSize, float lambda);
 	void AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 	void AVX_float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler);
 	double AVXmulti_float_linlogreg_SCD(float* x_history, char doRealSCD, char doLogreg, uint32_t numEpochs, uint32_t minibatchSize, uint32_t residualUpdatePeriod, float stepSize, float lambda, char useEncrypted, char useCompressed, uint32_t toIntegerScaler, uint32_t numThreads);
@@ -382,7 +385,6 @@ void scd::generate_synthetic_data(uint32_t _numSamples, uint32_t _numFeatures, c
 		free(b);
 	b = (float*)aligned_alloc(64, numSamples*sizeof(float));
 
-	srand(7);
 	float* x = (float*)malloc(numFeatures*sizeof(float));
 	for (uint32_t j = 0; j < numFeatures; j++) {
 		x[j] = ((float)rand())/RAND_MAX;
@@ -853,6 +855,9 @@ void scd::float_logreg_blockwise_SGD(float* x_history, uint32_t numEpochs, uint3
 				sampleIndex[i] = sampleIndex[temp_index];
 				sampleIndex[temp_index] = temp;
 			}
+			for (uint32_t k = 0; k < 10; k++) {
+				cout << "sampleIndex " << k << ": " << sampleIndex[k] << endl;
+			}
 
 			double stamp1 = get_time();
 
@@ -861,8 +866,9 @@ void scd::float_logreg_blockwise_SGD(float* x_history, uint32_t numEpochs, uint3
 				for (uint32_t j = 0; j < numFeatures; j++) {
 					dot += x[j]*sampleblocks[sampleIndex[i]][j+1];
 				}
+				float temp = ((1/(1+exp(-dot))) - sampleblocks[sampleIndex[i]][0]);
 				for (uint32_t j = 0; j < numFeatures; j++) {
-					gradient[j] = ((1/(1+exp(-dot))) - sampleblocks[sampleIndex[i]][0])*sampleblocks[sampleIndex[i]][j+1];
+					gradient[j] = temp*sampleblocks[sampleIndex[i]][j+1];
 					x[j] -= (stepSize/(float)(epoch+1))*(gradient[j] + lambda*x[j]);
 				}
 			}
@@ -880,10 +886,11 @@ void scd::float_logreg_blockwise_SGD(float* x_history, uint32_t numEpochs, uint3
 				x_history[epoch*numFeatures + j] = x[j];
 			}
 		}
-		
-		cout << "Loss " << epoch << ": " << calculate_logreg_loss(x, lambda, NULL) << endl;
-		uint32_t accuracy = calculate_logreg_accuracy(x, 0, numSamples);
-		cout << accuracy << " corrects out of " << numSamples << endl;
+		else {
+			cout << "Loss " << epoch << ": " << calculate_logreg_loss(x, lambda, NULL) << endl;
+			uint32_t accuracy = calculate_logreg_accuracy(x, 0, numSamples);
+			cout << accuracy << " corrects out of " << numSamples << endl;
+		}
 
 		cout << epoch << endl;
 	}
@@ -1347,6 +1354,156 @@ void scd::float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 }
 
 #ifdef AVX2
+void scd::AVX_float_logreg_blockwise_SGD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, uint32_t numMinibatchesAtATime, float stepSize, float lambda) {
+	float* x = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(x, 0, numFeatures*sizeof(float));
+	float* gradient = (float*)aligned_alloc(64, numFeatures*sizeof(float));
+	memset(gradient, 0, numFeatures*sizeof(float));
+	float** sampleblocks = (float**)malloc(minibatchSize*numMinibatchesAtATime*sizeof(float*));
+	for (uint32_t i = 0; i < minibatchSize*numMinibatchesAtATime; i++){
+		sampleblocks[i] = (float*)aligned_alloc(64, (numFeatures+1)*sizeof(float));
+	}
+
+	cout << "Initial loss: " << calculate_logreg_loss(x, lambda, NULL) << endl;
+	cout << "Initial accuracy: " << calculate_logreg_accuracy(x, 0, numSamples) << " corrects out of " << numSamples << endl;
+
+	uint32_t numMinibatches = numSamples/minibatchSize;
+	cout << "numMinibatches: " << numMinibatches << endl;
+	uint32_t rest = numSamples - numMinibatches*minibatchSize;
+	cout << "rest: " << rest << endl;
+
+	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
+
+		uint32_t minibatchIndex[numMinibatches];
+		for (uint32_t k = 0; k < numMinibatches; k++) {
+			minibatchIndex[k] = k;
+		}
+		for (uint32_t k = 0; k < numMinibatches; k++) {
+			uint32_t temp_index = 0;
+			_rdrand32_step(&temp_index);
+			temp_index = temp_index%numMinibatches;
+			uint32_t temp = minibatchIndex[k];
+			minibatchIndex[k] = minibatchIndex[temp_index];
+			minibatchIndex[temp_index] = temp;
+		}
+		// for (uint32_t k = 0; k < numMinibatches; k++) {
+		// 	cout << k << ": " << minibatchIndex[k] << endl;
+		// }
+
+		double start = get_time();
+
+		uint32_t numMinibatchesProcessed = 0;
+		uint32_t numMinibatchesToProcess = 0;
+		while( numMinibatchesProcessed < numMinibatches ) {
+			numMinibatchesToProcess = numMinibatchesAtATime;
+			if (numMinibatchesProcessed + numMinibatchesToProcess > numMinibatches)
+				numMinibatchesToProcess = numMinibatches - numMinibatchesProcessed;
+
+			cout << "----------------------------------------------------" << endl;
+			cout << "numMinibatchesProcessed: " << numMinibatchesProcessed << endl;
+			cout << "numMinibatchesToProcess: " << numMinibatchesToProcess << endl;
+
+			for (uint32_t m = 0; m < numMinibatchesToProcess; m++) {
+				uint32_t offset = minibatchIndex[numMinibatchesProcessed + m]*minibatchSize;
+
+				for (uint32_t j = 0; j < numFeatures; j++) {
+					for (uint32_t i = 0; i < minibatchSize; i++) {
+						sampleblocks[m*minibatchSize + i][j+1] = a[j][offset + i];
+					}
+				}
+				for (uint32_t i = 0; i < minibatchSize; i++) {
+					sampleblocks[m*minibatchSize + i][0] = b[offset + i];
+				}
+			}
+
+			uint32_t numSamplesToProcess = numMinibatchesToProcess*minibatchSize;
+			uint32_t sampleIndex[numSamplesToProcess];
+			for (uint32_t i = 0; i < numSamplesToProcess; i++) {
+				sampleIndex[i] = i;
+			}
+			for (uint32_t i = 0; i < numSamplesToProcess; i++) {
+				uint32_t temp_index = 0;
+				_rdrand32_step(&temp_index);
+				temp_index = temp_index%numSamplesToProcess;
+				uint32_t temp = sampleIndex[i];
+				sampleIndex[i] = sampleIndex[temp_index];
+				sampleIndex[temp_index] = temp;
+			}
+
+			double stamp1 = get_time();
+
+			for (uint32_t i = 0; i < numSamplesToProcess; i++) {
+				float dot[8];
+				__m256 avx_dot = _mm256_set1_ps(0);
+				for (uint32_t j = 0; j < numFeatures; j+=8) {
+					__m256 avx_x = _mm256_load_ps(x + j);
+					__m256 avx_sampleblocks = _mm256_load_ps(sampleblocks[sampleIndex[i]] + j + 1);
+
+					avx_dot = _mm256_fmadd_ps(avx_x, avx_sampleblocks, avx_dot);
+				}
+				_mm256_store_ps(dot, avx_dot);
+				dot[0] = dot[0] + dot[1] + dot[2] + dot[3] + dot[4] + dot[5] + dot[6] + dot[7];
+				if (numFeatures%8 > 0) {
+					for (uint32_t j = numFeatures - (numFeatures%8); j < numFeatures; j++){
+						dot[0] += x[j]*sampleblocks[sampleIndex[i]][j+1];
+					}
+				}
+				float temp = ((1/(1+exp(-dot[0]))) - sampleblocks[sampleIndex[i]][0]);
+
+				__m256 avx_temp = _mm256_set1_ps(temp);
+				__m256 avx_lambda = _mm256_set1_ps(lambda);
+				__m256 avx_stepsize = _mm256_set1_ps(stepSize/(float)(epoch+1));
+				for (uint32_t j = 0; j < numFeatures; j+=8) {
+					__m256 avx_x = _mm256_load_ps(x + j);
+					__m256 avx_sampleblocks = _mm256_load_ps(sampleblocks[sampleIndex[i]] + j + 1);
+					__m256 avx_gradient = _mm256_mul_ps(avx_temp, avx_sampleblocks);
+					__m256 avx_regularizer = _mm256_mul_ps(avx_lambda, avx_x);
+
+					avx_gradient = _mm256_add_ps(avx_gradient, avx_regularizer);
+					avx_gradient = _mm256_mul_ps(avx_stepsize, avx_gradient);
+
+					avx_x = _mm256_sub_ps(avx_x, avx_gradient);
+
+					_mm256_store_ps(x + j, avx_x);
+				}
+				if (numFeatures%8 > 0) {
+					for (uint32_t j = numFeatures - (numFeatures%8); j < numFeatures; j++) {
+						gradient[j] = temp*sampleblocks[sampleIndex[i]][j+1];
+						x[j] -= (stepSize/(float)(epoch+1))*(gradient[j] + lambda*x[j]);
+					}
+				}
+			}
+
+			cout << "Gradient compute time: " << get_time() - stamp1 << endl;
+
+			numMinibatchesProcessed += numMinibatchesToProcess;
+		}		
+
+		double end = get_time();
+		cout << "Time for one epoch: " << end-start << endl;
+
+		if (x_history != NULL) {
+			for (uint32_t j = 0; j < numFeatures; j++) {
+				x_history[epoch*numFeatures + j] = x[j];
+			}
+		}
+		else {
+			cout << "Loss " << epoch << ": " << calculate_logreg_loss(x, lambda, NULL) << endl;
+			uint32_t accuracy = calculate_logreg_accuracy(x, 0, numSamples);
+			cout << accuracy << " corrects out of " << numSamples << endl;
+		}
+
+		cout << epoch << endl;
+	}
+
+	free(x);
+	free(gradient);
+	for (uint32_t i = 0; i < minibatchSize*numMinibatchesAtATime; i++) {
+		free(sampleblocks[i]);
+	}
+	free(sampleblocks);
+}
+
 void scd::AVX_float_linreg_SCD(float* x_history, uint32_t numEpochs, uint32_t minibatchSize, float stepSize, char useEncrypted, char useCompressed, uint32_t toIntegerScaler) {
 	if (minibatchSize%8 == 8) {
 		cout << "For AVX minibatchSize%8 must be 0!" << endl;
