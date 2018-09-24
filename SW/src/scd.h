@@ -90,6 +90,7 @@ public:
 		AES_256_Key_Expansion(initKey, KEYS_enc);
 		AES_256_Decryption_Keys(KEYS_enc, KEYS_dec);
 	}
+	
 	~scd() {
 		if (gotFPGA == 1)
 			delete interfaceFPGA;
@@ -417,7 +418,7 @@ void scd::a_normalize(char toMinus1_1, char rowOrColumnWise, float* a_min, float
 	if (rowOrColumnWise == 'r') {
 		for (uint32_t i = 0; i < numSamples; i++) {
 			float amin = numeric_limits<float>::max();
-			float amax = numeric_limits<float>::min();
+			float amax = -numeric_limits<float>::max();
 			for (uint32_t j = 0; j < numFeatures; j++) {
 				float a_here = a[j][i];
 				if (a_here > amax)
@@ -447,7 +448,7 @@ void scd::a_normalize(char toMinus1_1, char rowOrColumnWise, float* a_min, float
 	else {
 		for (uint32_t j = 1; j < numFeatures; j++) { // Don't normalize bias
 			float amin = numeric_limits<float>::max();
-			float amax = numeric_limits<float>::min();
+			float amax = -numeric_limits<float>::max();
 			for (uint32_t i = 0; i < numSamples; i++) {
 				float a_here = a[j][i];
 				if (a_here > amax)
@@ -482,7 +483,7 @@ uint32_t scd::b_normalize(char toMinus1_1, char binarize_b, float b_toBinarizeTo
 	b_normalizedToMinus1_1 = toMinus1_1;
 	if (binarize_b == 0) {
 		float bmin = numeric_limits<float>::max();
-		float bmax = numeric_limits<float>::min();
+		float bmax = -numeric_limits<float>::max();
 		for (uint32_t i = 0; i < numSamples; i++) {
 			if (b[i] > bmax)
 				bmax = b[i];
@@ -756,25 +757,27 @@ void scd::float_logreg_SGD(float* x_history, uint32_t numEpochs, uint32_t miniba
 				}
 			}
 			for (uint32_t j = 0; j < numFeatures; j++) {
-				x[j] -= (stepSize/(epoch+1))*(gradient[j]/minibatchSize + (lambda/minibatchSize)*x[j]);
+				// x[j] -= (stepSize/(epoch+1))*(gradient[j]/minibatchSize + (lambda/numSamples)*x[j]);
+				x[j] -= stepSize*(gradient[j]/minibatchSize + (lambda/numSamples)*x[j]);
 				gradient[j] = 0.0;
 			}
 		}
 
 		double end = get_time();
-		cout << "Time for one epoch: " << end-start << endl;
+		// cout << "Time for one epoch: " << end-start << endl;
 
 		if (x_history != NULL) {
 			for (uint32_t j = 0; j < numFeatures; j++) {
 				x_history[epoch*numFeatures + j] = x[j];
 			}
 		}
+		else {
+			cout << "Loss " << epoch << ": " << calculate_logreg_loss(x, lambda, sampleWeights) << endl;
+			// uint32_t accuracy = calculate_logreg_accuracy(x, 0, numSamples);
+			// cout << accuracy << " corrects out of " << numSamples << endl;
+		}
 		
-		cout << "Loss " << epoch << ": " << calculate_logreg_loss(x, lambda, sampleWeights) << endl;
-		uint32_t accuracy = calculate_logreg_accuracy(x, 0, numSamples);
-		cout << accuracy << " corrects out of " << numSamples << endl;
-
-		cout << epoch << endl;
+		// cout << epoch << endl;
 	}
 
 	free(x);
@@ -1047,7 +1050,7 @@ void scd::float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 					temp_time2 = get_time();
 					dot_product_time += (temp_time2-temp_time1);
 
-					float step = stepSize*((gradient + lambda)/minibatchSize); 
+					float step = stepSize*(gradient/minibatchSize + (lambda/numSamples)*x[m*numFeatures + j]); 
 					x[m*numFeatures + j] -= step;
 
 					for (uint32_t i = 0; i < minibatchSize; i++) {
@@ -1077,12 +1080,12 @@ void scd::float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 			}
 
 			double end = get_time();
-			cout << "decryption_time: " << decryption_time << endl;
-			cout << "decompression_time: " << decompression_time << endl;
-			cout << "dot_product_time: " << dot_product_time << endl;
-			cout << "residual_update_time: " << residual_update_time << endl;
-			cout << "x_average_time: " << end-temp_time1 << endl;
-			cout << "Time for one epoch: " << end-start << endl;
+			// cout << "decryption_time: " << decryption_time << endl;
+			// cout << "decompression_time: " << decompression_time << endl;
+			// cout << "dot_product_time: " << dot_product_time << endl;
+			// cout << "residual_update_time: " << residual_update_time << endl;
+			// cout << "x_average_time: " << end-temp_time1 << endl;
+			// cout << "Time for one epoch: " << end-start << endl;
 
 			if (x_history != NULL) {
 				for (uint32_t j = 0; j < numFeatures; j++) {
@@ -1092,10 +1095,10 @@ void scd::float_logreg_SCD(float* x_history, uint32_t numEpochs, uint32_t miniba
 			}
 			else {
 				cout << "Loss " << epoch << ": " << calculate_logreg_loss(x_end, lambda, NULL) << endl;
-				cout << calculate_logreg_accuracy(x_end, 0, numSamples) << " corrects out of " << numSamples << endl;
+				// cout << calculate_logreg_accuracy(x_end, 0, numSamples) << " corrects out of " << numSamples << endl;
 			}
 
-			cout << epoch << endl;
+			// cout << epoch << endl;
 		}
 	}
 
