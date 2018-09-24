@@ -65,9 +65,11 @@ int main(int argc, char* argv[]) {
 	args.startIndex = 0;
 	args.length = columnML.m_cstore->m_numSamples;
 
-	columnML.SGD(type, nullptr, numEpochs, 1, stepSize, lambda, &args);
+	columnML.SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
 
-	// columnML.SCD(type, nullptr, numEpochs, numSamples, 20, lambda, 1, 10000, false, false, VALUE_TO_INT_SCALER, &args);
+	columnML.AVX_SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
+
+	columnML.SCD(type, nullptr, numEpochs, numSamples, 20, lambda, 1, 10000, false, false, VALUE_TO_INT_SCALER, &args);
 
 	columnML.AVX_SCD(type, nullptr, numEpochs, numSamples, 10, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
 

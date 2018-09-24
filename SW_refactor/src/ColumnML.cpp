@@ -187,7 +187,10 @@ void ColumnML::SGD(
 		double start = get_time();
 
 		for (uint32_t k = 0; k < numMinibatches; k++) {
-			uint32_t m = numMinibatches*((float)(rand()-1)/(float)RAND_MAX);
+			// uint32_t rand = 0;
+			// _rdseed32_step(&rand);
+			// uint32_t m = numMinibatches*((float)(rand-1)/(float)UINT_MAX);
+			uint32_t m = k;
 			for (uint32_t i = 0; i < minibatchSize; i++) {
 				updateGradient(type, gradient, x, m*minibatchSize + i, args);
 			}
@@ -230,11 +233,6 @@ void ColumnML::AVX_SGD(
 	float lambda, 
 	AdditionalArguments* args) 
 {
-	if (minibatchSize%8 > 0) {
-		cout << "For AVX minibatchSize%8 must be 0!" << endl;
-		exit(1);
-	}
-
 	float* x = (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
 	memset(x, 0, m_cstore->m_numFeatures*sizeof(float));
 	float* gradient = (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
@@ -249,6 +247,9 @@ void ColumnML::AVX_SGD(
 	cout << "Initial loss: " << Loss(type, x, lambda, args) << endl;
 	cout << "Initial accuracy: " << Accuracy(type, x, args) << " corrects out of " << m_cstore->m_numSamples << endl;
 
+	__m256 AVX_ones = _mm256_set1_ps(1.0);
+	__m256 AVX_minusOnes = _mm256_set1_ps(-1.0);
+
 	float scaledStepSize = stepSize/minibatchSize;
 	float scaledLambda = stepSize*lambda;
 	cout << "scaledLambda: " << scaledLambda << endl;
@@ -257,19 +258,38 @@ void ColumnML::AVX_SGD(
 		double start = get_time();
 
 		for (uint32_t k = 0; k < numMinibatches; k++) {
-			uint32_t m = numMinibatches*((float)(rand()-1)/(float)RAND_MAX);
-			for (uint32_t i = 0; i < minibatchSize; i++) {
-				updateGradient(type, gradient, x, m*minibatchSize + i, args);
-
-				switch(type) {
-					case linreg:
-						
-						break;
-					case logreg:
-						
-						break;
-					default:
-						break;
+			// uint32_t rand = 0;
+			// _rdseed32_step(&rand);
+			// uint32_t m = numMinibatches*((float)(rand-1)/(float)UINT_MAX)*minibatchSize;
+			uint32_t minibatchOffset = k*minibatchSize;
+			if (minibatchSize%8 == 0) {
+				for (uint32_t i = 0; i < minibatchSize-(minibatchSize%8); i+=8) {
+					__m256 AVX_dot = AVX_verticalGetDot(x, minibatchOffset + i);
+					if (type == logreg) {
+						AVX_dot = _mm256_mul_ps(AVX_minusOnes, AVX_dot);
+						AVX_dot = exp256_ps(AVX_dot);
+						AVX_dot = _mm256_add_ps(AVX_ones, AVX_dot);
+						AVX_dot = _mm256_div_ps(AVX_ones, AVX_dot);
+					}
+					__m256 AVX_labels = _mm256_load_ps(m_cstore->m_labels + minibatchOffset + i);
+					AVX_dot = _mm256_sub_ps(AVX_dot, AVX_labels);
+					for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+						__m256 AVX_samples = _mm256_load_ps(m_cstore->m_samples[j] + minibatchOffset + i);
+						__m256 AVX_gradient = _mm256_mul_ps(AVX_dot, AVX_samples);
+						float delta[8];
+						_mm256_store_ps(delta, AVX_gradient);
+						gradient[j] += delta[0] + delta[1] + delta[2] + delta[3] + delta[4] + delta[5] + delta[6] + delta[7];
+					}
+				}
+			}
+			for (uint32_t i = minibatchSize-(minibatchSize%8); i < minibatchSize; i++) {
+				float dot = AVX_horizontalGetDot(x, minibatchOffset + i);
+				if (type == logreg) {
+					dot = 1/(1+exp(-dot));
+				}
+				dot = (dot-m_cstore->m_labels[minibatchOffset + i]);
+				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+					gradient[j] += dot*m_cstore->m_samples[j][minibatchOffset + i];
 				}
 			}
 			for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
@@ -609,8 +629,8 @@ void ColumnML::AVX_SCD(
 
 	float scaledStepSize = -stepSize/(float)minibatchSize;
 	float scaledLambda = -stepSize*lambda;
-	__m256 ones = _mm256_set1_ps(1.0);
-	__m256 minusOnes = _mm256_set1_ps(-1.0);
+	__m256 AVX_ones = _mm256_set1_ps(1.0);
+	__m256 AVX_minusOnes = _mm256_set1_ps(-1.0);
 
 	float* residual = (float*)aligned_alloc(64, m_cstore->m_numSamples*sizeof(float));
 	memset(residual, 0, m_cstore->m_numSamples*sizeof(float));
@@ -711,10 +731,10 @@ void ColumnML::AVX_SCD(
 								AVX_labels = _mm256_load_ps(m_cstore->m_labels + m*minibatchSize + i);
 								AVX_residual = _mm256_load_ps(residual + m*minibatchSize + i);
 
-								AVX_residual = _mm256_mul_ps(minusOnes, AVX_residual);
+								AVX_residual = _mm256_mul_ps(AVX_minusOnes, AVX_residual);
 								AVX_residual = exp256_ps(AVX_residual);
-								AVX_residual = _mm256_add_ps(ones, AVX_residual);
-								AVX_residual = _mm256_div_ps(ones, AVX_residual);
+								AVX_residual = _mm256_add_ps(AVX_ones, AVX_residual);
+								AVX_residual = _mm256_div_ps(AVX_ones, AVX_residual);
 
 								AVX_error = _mm256_sub_ps(AVX_residual, AVX_labels);
 								gradient = _mm256_fmadd_ps(AVX_samples, AVX_error, gradient);

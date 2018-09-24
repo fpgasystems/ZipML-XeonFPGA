@@ -31,7 +31,7 @@
 
 using namespace std;
 
-// #define PRINT_TIMING
+#define PRINT_TIMING
 #define PRINT_LOSS
 // #define PRINT_ACCURACY
 
@@ -137,6 +137,14 @@ public:
 		float stepSize, 
 		float lambda, 
 		AdditionalArguments* args);
+	void AVX_SGD(
+		ModelType type, 
+		float* xHistory, 
+		uint32_t numEpochs, 
+		uint32_t minibatchSize, 
+		float stepSize, 
+		float lambda, 
+		AdditionalArguments* args);
 	void SCD(
 		ModelType type, 
 		float* xHistory, 
@@ -172,17 +180,40 @@ private:
 		return dot;
 	}
 
-	inline float AVX_getDot(float* x, uint32_t sampleIndex) {
+	inline float AVX_horizontalGetDot(float* x, uint32_t sampleIndex) {
 		float dot = 0.0;
+
 		if (m_cstore->m_numFeatures >= 8) {
-			__m256 dot_AVX = _mm256_set1_ps(0.0);
-			for (uint32_t j = 0; j < m_cstore->m_numFeatures; j+=8) {
-				dot_AVX = _mm256_fmadd_ps(AVX_x, AVX_samples, dot);
-				dot += x[j]*m_cstore->m_samples[j][sampleIndex];
+			__m256 AVX_dot = _mm256_set1_ps(0.0);
+			float gather[8];
+			for (uint32_t j = 0; j < m_cstore->m_numFeatures-(m_cstore->m_numFeatures%8); j+=8) {
+				__m256 AVX_x = _mm256_load_ps(x + j);
+
+				for (uint32_t k = 0; k < 8; k++) {
+					gather[k] = m_cstore->m_samples[j+k][sampleIndex];
+				}
+				__m256 AVX_samples = _mm256_load_ps(gather);
+				AVX_dot = _mm256_fmadd_ps(AVX_x, AVX_samples, AVX_dot);
 			}
+			_mm256_store_ps(gather, AVX_dot);
+			dot = gather[0] + gather[1] + gather[2] + gather[3] + gather[4] + gather[5] + gather[6] + gather[7];
+		}
+		for (uint32_t j = m_cstore->m_numFeatures-(m_cstore->m_numFeatures%8); j < m_cstore->m_numFeatures; j++) {
+			dot += x[j]*m_cstore->m_samples[j][sampleIndex];
+		}
+		return dot;
+	}
+
+	inline __m256 AVX_verticalGetDot(float* x, uint32_t sampleIndex) {
+		__m256 AVX_dot = _mm256_set1_ps(0.0);
+		float dot[8];
+		for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+			__m256 AVX_x = _mm256_set1_ps(x[j]);
+			__m256 AVX_samples = _mm256_load_ps(m_cstore->m_samples[j] + sampleIndex);
+			AVX_dot = _mm256_fmadd_ps(AVX_x, AVX_samples, AVX_dot);
 		}
 		
-		return dot;
+		return AVX_dot;
 	}
 
 	void updateL2svmGradient(float* gradient, float* x, uint32_t sampleIndex, AdditionalArguments* args) {
@@ -202,15 +233,17 @@ private:
 
 	void updateLogregGradient(float* gradient, float* x, uint32_t sampleIndex) {
 		float dot = getDot(x, sampleIndex);
+		dot = ((1/(1+exp(-dot))) - m_cstore->m_labels[sampleIndex]);
 		for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
-			gradient[j] += ((1/(1+exp(-dot))) - m_cstore->m_labels[sampleIndex])*m_cstore->m_samples[j][sampleIndex];
+			gradient[j] += dot*m_cstore->m_samples[j][sampleIndex];
 		}
 	}
 
 	void updateLinregGradient(float* gradient, float* x, uint32_t sampleIndex) {
 		float dot = getDot(x, sampleIndex);
+		dot -= m_cstore->m_labels[sampleIndex];
 		for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
-			gradient[j] += (dot - m_cstore->m_labels[sampleIndex])*m_cstore->m_samples[j][sampleIndex];
+			gradient[j] += dot*m_cstore->m_samples[j][sampleIndex];
 		}
 
 	}
