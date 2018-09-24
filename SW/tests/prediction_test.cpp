@@ -55,7 +55,7 @@ int main(int argc, char* argv[]) {
 
 	uint32_t SGD_stepSizeShifter = 2;
 	uint32_t SCD_stepSizeShifter = 1;
-	uint32_t numEpochs = 1000;
+	uint32_t numEpochs = 100;
 	float lambda = 0.01;
 
 	scd scd_app(0);
@@ -73,19 +73,19 @@ int main(int argc, char* argv[]) {
 	float* x_history = (float*)malloc(scd_app.numFeatures*numEpochs*sizeof(float));
 
 	// scd_app.float_logreg_SGD(x_history, numEpochs, 16, 1.0/(1 << SGD_stepSizeShifter), lambda, NULL);
-	// scd_app.float_logreg_SCD(x_history, numEpochs, miniBatchSize, 20, 1.0/(1 << SCD_stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER);
+	scd_app.float_linreg_SCD(NULL, numEpochs, numSamples, 1, numEpochs+1, 1.0/(1 << SCD_stepSizeShifter), 0, 0, VALUE_TO_INT_SCALER);
 	// scd_app.AVX_float_logreg_SCD(x_history, numEpochs, numSamples, numEpochs+1, 1.0/(1 << SCD_stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER);
 	// scd_app.AVX_float_logreg_SCD(x_history, numEpochs, miniBatchSize, 10, 1.0/(1 << SCD_stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER);
-	scd_app.AVXmulti_float_linlogreg_SCD(x_history, 0, 1, numEpochs, miniBatchSize, 100, 1.0/(1 << SCD_stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER, 14);
+	// scd_app.AVXmulti_float_linlogreg_SCD(x_history, 0, 1, numEpochs, miniBatchSize, 100, 1.0/(1 << SCD_stepSizeShifter), lambda, 0, 0, VALUE_TO_INT_SCALER, 14);
 
-	for (uint32_t i = 0; i < numEpochs; i+=10) {
-		cout << scd_app.calculate_logreg_loss(((float*)x_history) + i*scd_app.numFeatures, lambda, NULL) << endl;
-		// cout << "accuracy: " << scd_app.calculate_logreg_accuracy(((float*)x_history) + i*scd_app.numFeatures, 0, scd_app.numSamples) << endl;
-	}
+	// for (uint32_t i = 0; i < numEpochs; i+=10) {
+	// 	cout << scd_app.calculate_logreg_loss(((float*)x_history) + i*scd_app.numFeatures, lambda, NULL) << endl;
+	// 	// cout << "accuracy: " << scd_app.calculate_logreg_accuracy(((float*)x_history) + i*scd_app.numFeatures, 0, scd_app.numSamples) << endl;
+	// }
 
-	scd_app.load_raw_data(pathToTestDataset, numTestSamples, numFeatures, 0);
-	scd_app.print_samples(3);
-	scd_app.write_logreg_predictions(((float*)x_history) + (numEpochs-1)*scd_app.numFeatures, a_min, a_range);
+	// scd_app.load_raw_data(pathToTestDataset, numTestSamples, numFeatures, 0);
+	// scd_app.print_samples(3);
+	// scd_app.write_logreg_predictions(((float*)x_history) + (numEpochs-1)*scd_app.numFeatures, a_min, a_range);
 
 	free(a_min);
 	free(a_range);
