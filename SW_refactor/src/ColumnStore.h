@@ -23,6 +23,7 @@
 #include <limits>
 
 #include "aes.h"
+#include "../driver/iFPGA.h"
 
 using namespace std;
 
@@ -102,6 +103,58 @@ public:
 	static uint32_t compressColumn(float* originalColumn, uint32_t inNumWords, uint32_t* compressedColumn, uint32_t toIntegerScaler);
 	void decryptColumn(uint32_t* encryptedColumn, uint32_t inNumWords, float* decryptedColumn);
 	void encryptColumn(float* originalColumn, uint32_t inNumWords, uint32_t* encryptedColumn);
+
+	inline void ReturnDecompressedAndDecrypted(
+		float* transformedColumn1,
+		float* transformedColumn2,
+		uint32_t coordinate,
+		uint32_t* minibatchIndex,
+		uint32_t numMinibatchesAtATime,
+		uint32_t minibatchSize,
+		bool useEncrypted, 
+		bool useCompressed,
+		uint32_t toIntegerScaler,
+		double &decryptionTime,
+		double &decompressionTime)
+	{
+		double timeStamp1, timeStamp2, timeStamp3;
+		for (uint32_t l = 0; l < numMinibatchesAtATime; l++) {
+			if (useEncrypted && useCompressed) {
+				int32_t compressedSamplesOffset = 0;
+				if (minibatchIndex[l] > 0) {
+					compressedSamplesOffset = m_compressedSamplesSizes[coordinate][minibatchIndex[l]-1];
+				}
+				timeStamp1 = get_time();
+				decryptColumn(m_encryptedSamples[coordinate] + compressedSamplesOffset, m_compressedSamplesSizes[coordinate][minibatchIndex[l]] - compressedSamplesOffset, transformedColumn1 + l*minibatchSize);
+				timeStamp2 = get_time();
+				decryptionTime += (timeStamp2-timeStamp1);
+				ColumnStore::decompressColumn((uint32_t*)transformedColumn1 + l*minibatchSize, m_compressedSamplesSizes[coordinate][minibatchIndex[l]] - compressedSamplesOffset, transformedColumn2 + l*minibatchSize, toIntegerScaler);
+				timeStamp3 = get_time();
+				decompressionTime += (timeStamp3-timeStamp2);
+			}
+			else if (useEncrypted) {
+				timeStamp1 = get_time();
+				decryptColumn(m_encryptedSamples[coordinate] + minibatchIndex[l]*minibatchSize, minibatchSize, transformedColumn2 + l*minibatchSize);
+				timeStamp2 = get_time();
+				decryptionTime += (timeStamp2-timeStamp1);
+			}
+			else if (useCompressed) {
+				timeStamp1 = get_time();
+				int32_t compressedSamplesOffset = 0;
+				if (minibatchIndex[l] > 0) {
+					compressedSamplesOffset = m_compressedSamplesSizes[coordinate][minibatchIndex[l]-1];
+				}
+				ColumnStore::decompressColumn(m_compressedSamples[coordinate] + compressedSamplesOffset, m_compressedSamplesSizes[coordinate][minibatchIndex[l]] - compressedSamplesOffset, transformedColumn2 + l*minibatchSize, toIntegerScaler);
+				timeStamp2 = get_time();
+				decompressionTime += (timeStamp2-timeStamp1);
+			}
+			else {
+				for (uint32_t i = 0; i < minibatchSize; i++) {
+					transformedColumn2[l*minibatchSize + i] = m_samples[coordinate][minibatchIndex[l]*minibatchSize + i];
+				}
+			}
+		}
+	}
 
 private:
 	void reallocData() {

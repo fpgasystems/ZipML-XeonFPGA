@@ -31,7 +31,7 @@
 
 using namespace std;
 
-#define PRINT_TIMING
+// #define PRINT_TIMING
 #define PRINT_LOSS
 // #define PRINT_ACCURACY
 
@@ -145,6 +145,14 @@ public:
 		float stepSize, 
 		float lambda, 
 		AdditionalArguments* args);
+	void AVXrowwise_SGD(
+		ModelType type, 
+		float* xHistory, 
+		uint32_t numEpochs, 
+		uint32_t minibatchSize, 
+		float stepSize, 
+		float lambda, 
+		AdditionalArguments* args);
 	void SCD(
 		ModelType type, 
 		float* xHistory, 
@@ -170,6 +178,20 @@ public:
 		bool useCompressed, 
 		uint32_t toIntegerScaler,
 		AdditionalArguments* args);
+	double AVXmulti_SCD (
+		ModelType type,
+		bool doRealSCD,
+		float* xHistory,
+		uint32_t numEpochs,
+		uint32_t minibatchSize,
+		float stepSize,
+		float lambda,
+		uint32_t residualUpdatePeriod,
+		bool useEncrypted,
+		bool useCompressed,
+		uint32_t toIntegerScaler,
+		AdditionalArguments* args,
+		uint32_t numThreads);
 
 private:
 	inline float getDot(float* x, uint32_t sampleIndex) {

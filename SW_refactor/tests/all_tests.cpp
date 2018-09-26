@@ -22,6 +22,10 @@ using namespace std;
 
 #define VALUE_TO_INT_SCALER 10
 
+
+void StepSizeSweepSGD(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args);
+void StepSizeSweepSCD(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args);
+
 int main(int argc, char* argv[]) {
 	cpu_set_t cpuset;
 	pthread_t thread = pthread_self();
@@ -52,35 +56,67 @@ int main(int argc, char* argv[]) {
 	float stepSize = 0.001;
 	float lambda = 0.001;
 
-	ColumnML columnML(false);
+	ColumnML* columnML = new ColumnML(false);
 
-	columnML.m_cstore->LoadRawData(pathToDataset, numSamples, numFeatures, true);
-	columnML.m_cstore->NormalizeSamples(ZeroToOne, column);
-	columnML.m_cstore->NormalizeLabels(ZeroToOne, true, 1);
-	columnML.m_cstore->PrintSamples(2);
+	columnML->m_cstore->LoadRawData(pathToDataset, numSamples, numFeatures, true);
+	columnML->m_cstore->NormalizeSamples(ZeroToOne, column);
+	columnML->m_cstore->NormalizeLabels(ZeroToOne, true, 1);
+	columnML->m_cstore->PrintSamples(2);
 	
 	ModelType type = logreg;
 
 	AdditionalArguments args;
 	args.startIndex = 0;
-	args.length = columnML.m_cstore->m_numSamples;
+	args.length = columnML->m_cstore->m_numSamples;
 
-	columnML.SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
+	// StepSizeSweepSGD(columnML, type, numEpochs, minibatchSize, lambda, args);
 
-	columnML.AVX_SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
+	// StepSizeSweepSCD(columnML, type, numEpochs, numSamples, lambda, args);
 
-	columnML.SCD(type, nullptr, numEpochs, numSamples, 20, lambda, 1, 10000, false, false, VALUE_TO_INT_SCALER, &args);
+	// columnML->SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
 
-	columnML.AVX_SCD(type, nullptr, numEpochs, numSamples, 10, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
+	// columnML->AVXrowwise_SGD(type, nullptr, numEpochs, 1, stepSize, lambda, &args);
 
-	// columnML.m_cstore->CompressSamples(minibatchSize, VALUE_TO_INT_SCALER);
-	// columnML.SCD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, 1, 100, false, true, VALUE_TO_INT_SCALER, &args);
+	// columnML->AVX_SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
 
-	// columnML.m_cstore->EncryptSamples(minibatchSize, false);
-	// columnML.SCD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, 1, 100, true, false, VALUE_TO_INT_SCALER, &args);
+	// columnML->SCD(type, nullptr, numEpochs, numSamples, 10, lambda, 1, 10000, false, false, VALUE_TO_INT_SCALER, &args);
 
-	// columnML.m_cstore->EncryptSamples(minibatchSize, true);
-	// columnML.SCD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, 1, 100, true, true, VALUE_TO_INT_SCALER, &args);
+	// columnML->AVX_SCD(type, nullptr, numEpochs, numSamples, 10, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
+
+	columnML->AVXmulti_SCD(type, true, nullptr, numEpochs, minibatchSize, 10, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args, 14);
+
+	// columnML->m_cstore->CompressSamples(minibatchSize, VALUE_TO_INT_SCALER);
+	// columnML->SCD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, 1, 100, false, true, VALUE_TO_INT_SCALER, &args);
+
+	// columnML->m_cstore->EncryptSamples(minibatchSize, false);
+	// columnML->SCD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, 1, 100, true, false, VALUE_TO_INT_SCALER, &args);
+
+	// columnML->m_cstore->EncryptSamples(minibatchSize, true);
+	// columnML->SCD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, 1, 100, true, true, VALUE_TO_INT_SCALER, &args);
+
+	delete columnML;
 
 	return 0;
+}
+
+void StepSizeSweepSGD(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args) {
+	float stepSize = 1;
+	for (uint32_t n = 0; n < 5; n++) {
+		stepSize = stepSize/((float)10);
+		cout << "stepSize: " << stepSize << endl;
+		if (minibatchSize == 1) {
+			obj->AVXrowwise_SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
+		}
+		else {
+			obj->AVX_SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
+		}
+	}
+}
+
+void StepSizeSweepSCD(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args) {
+	float stepSizes[5] = {1, 10, 20, 30, 40};
+	for (uint32_t n = 0; n < 5; n++) {
+		cout << "stepSize: " << stepSizes[n] << endl;
+		obj->AVX_SCD(type, nullptr, numEpochs, minibatchSize, stepSizes[n], lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
+	}
 }
