@@ -36,24 +36,23 @@ int main(int argc, char* argv[]) {
 	pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset);
 
 	char* pathToDataset;
-	uint32_t numSamples;
-	uint32_t numFeatures;
+	uint32_t numSamples = 0;
+	uint32_t numFeatures = 0;
 	uint32_t numEpochs = 10;
 	uint32_t minibatchSize = 512;
 	if (argc != 6) {
 		cout << "Usage: ./app <pathToDataset> <numSamples> <numFeatures> <numEpochs> <minibatchSize>" << endl;
 		return 0;
 	}
-	else {
-		pathToDataset = argv[1];
-		numSamples = atoi(argv[2]);
-		numFeatures = atoi(argv[3]);
-		numEpochs = atoi(argv[4]);
-		minibatchSize = atoi(argv[5]);
-	}
+	pathToDataset = argv[1];
+	numSamples = atoi(argv[2]);
+	numFeatures = atoi(argv[3]);
+	numEpochs = atoi(argv[4]);
+	minibatchSize = atoi(argv[5]);
+
 	uint32_t numMinibatchesAtATime = 1;
 	
-	float stepSize = 0.001;
+	float stepSize = 0.1;
 	float lambda = 0.001;
 
 	ColumnML* columnML = new ColumnML(false);
@@ -66,8 +65,10 @@ int main(int argc, char* argv[]) {
 	ModelType type = logreg;
 
 	AdditionalArguments args;
-	args.startIndex = 0;
-	args.length = columnML->m_cstore->m_numSamples;
+	args.m_firstSample = 0;
+	args.m_numSamples = columnML->m_cstore->m_numSamples;
+
+
 
 	// StepSizeSweepSGD(columnML, type, numEpochs, minibatchSize, lambda, args);
 
@@ -79,9 +80,9 @@ int main(int argc, char* argv[]) {
 
 	// columnML->AVX_SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
 
-	// columnML->SCD(type, nullptr, numEpochs, numSamples, 10, lambda, 1, 10000, false, false, VALUE_TO_INT_SCALER, &args);
+	// columnML->SCD(type, nullptr, numEpochs, numSamples - (numSamples%8), 10, lambda, 1, 10000, false, false, VALUE_TO_INT_SCALER, &args);
 
-	// columnML->AVX_SCD(type, nullptr, numEpochs, numSamples, 10, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
+	// columnML->AVX_SCD(type, nullptr, numEpochs, numSamples - (numSamples%8), 10, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
 
 	columnML->AVXmulti_SCD(type, true, nullptr, numEpochs, minibatchSize, 10, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args, 14);
 
@@ -94,6 +95,42 @@ int main(int argc, char* argv[]) {
 	// columnML->m_cstore->EncryptSamples(minibatchSize, true);
 	// columnML->SCD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, 1, 100, true, true, VALUE_TO_INT_SCALER, &args);
 
+
+	// columnML->AVXrowwise_SGD(type, nullptr, numEpochs, 1, 0.001, lambda, &args);
+
+	// columnML->AVX_SGD(type, nullptr, numEpochs, 8, 0.01, lambda, &args);
+
+	// columnML->AVX_SGD(type, nullptr, numEpochs, 64, 0.1, lambda, &args);
+
+	// columnML->AVX_SGD(type, nullptr, numEpochs, 512, 0.1, lambda, &args);
+
+
+
+
+
+	// float* xHistory_SCD = new float[numEpochs*columnML->m_cstore->m_numFeatures];
+	// columnML->AVXmulti_SCD(type, true, xHistory_SCD, numEpochs, minibatchSize, 10, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args, 14);
+
+	// float* xHistory_SGD = new float[numEpochs*columnML->m_cstore->m_numFeatures];
+	// columnML->AVX_SGD(type, xHistory_SGD, numEpochs, 64, 0.1, lambda, &args);
+
+
+	// args.m_firstSample = columnML->m_cstore->m_numSamples * 0.7;
+	// args.m_numSamples = columnML->m_cstore->m_numSamples - args.m_firstSample;
+
+	// cout << "SCD validation loss: " << endl;
+	// for (uint32_t e = 0; e < numEpochs; e++) {
+	// 	cout << columnML->Loss(type, xHistory_SCD + e*columnML->m_cstore->m_numFeatures, lambda, &args) << endl;
+	// }
+
+	// cout << "SGD validation loss: " << endl;
+	// for (uint32_t e = 0; e < numEpochs; e++) {
+	// 	cout << columnML->Loss(type, xHistory_SGD + e*columnML->m_cstore->m_numFeatures, lambda, &args) << endl;
+	// }
+
+
+
+	
 	delete columnML;
 
 	return 0;

@@ -34,6 +34,8 @@ using namespace std;
 // #define PRINT_TIMING
 #define PRINT_LOSS
 // #define PRINT_ACCURACY
+#define SGD_SHUFFLE
+// #define SCD_SHUFFLE
 
 #define MAX_NUM_THREADS 14
 #define NUM_FINSTANCES 4
@@ -43,17 +45,17 @@ enum ModelType {l2svm, logreg, linreg};
 struct AdditionalArguments
 {
 	// l2svm
-	float costPos;
-	float costNeg;
+	float m_costPos;
+	float m_costNeg;
 
 	// logreg
-	uint32_t startIndex;
-	uint32_t length;
+	uint32_t m_firstSample;
+	uint32_t m_numSamples;
 
 	// l2svm, linreg
-	float decisionBoundary;
-	float trueLabel;
-	float falseLabel;
+	float m_decisionBoundary;
+	float m_trueLabel;
+	float m_falseLabel;
 	
 };
 
@@ -90,25 +92,25 @@ public:
 
 	void WriteLogregPredictions(float* x);
 
-	float L2regularization(float* x, float lambda);
+	float L2regularization(float* x, float lambda, AdditionalArguments* args);
 	float L1regularization(float* x, float lambda);
-	float L2svmLoss(float* x, float costPos, float costNeg, float lambda);
-	float LogregLoss(float* x, float lambda);
-	float LinregLoss(float* x, float lambda);
-	uint32_t LogregAccuracy(float* x, uint32_t startIndex, uint32_t length);
-	uint32_t LinregAccuracy(float* x, float decisionBoundary, int trueLabel, int falseLabel);
+	float L2svmLoss(float* x, float lambda, AdditionalArguments* args);
+	float LogregLoss(float* x, float lambda, AdditionalArguments* args);
+	float LinregLoss(float* x, float lambda, AdditionalArguments* args);
+	uint32_t LogregAccuracy(float* x, AdditionalArguments* args);
+	uint32_t LinregAccuracy(float* x, AdditionalArguments* args);
 	
 	float Loss(ModelType type, float* x, float lambda, AdditionalArguments* args) {
 		float result = 0.0;
 		switch(type) {
 			case l2svm:
-				result = L2svmLoss(x, args->costPos, args->costNeg, lambda);
+				result = L2svmLoss(x, lambda, args);
 				break;
 			case logreg:
-				result = LogregLoss(x, lambda);
+				result = LogregLoss(x, lambda, args);
 				break;
 			case linreg:
-				result = LinregLoss(x, lambda);
+				result = LinregLoss(x, lambda, args);
 				break;
 		}
 		return result;
@@ -117,13 +119,13 @@ public:
 		uint32_t result = 0;
 		switch(type) {
 			case l2svm:
-				result = LinregAccuracy(x, args->decisionBoundary, args->trueLabel, args->falseLabel);
+				result = LinregAccuracy(x, args);
 				break;
 			case logreg:
-				result = LogregAccuracy(x, args->startIndex, args->length);
+				result = LogregAccuracy(x, args);
 				break;
 			case linreg:
-				result = LinregAccuracy(x, args->decisionBoundary, args->trueLabel, args->falseLabel);
+				result = LinregAccuracy(x, args);
 				break;
 		}
 		return result;
@@ -244,10 +246,10 @@ private:
 		if (temp > 0) {
 			for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
 				if (m_cstore->m_labels[sampleIndex] > 0) {
-					gradient[j] += args->costPos*(dot - m_cstore->m_labels[sampleIndex])*m_cstore->m_samples[j][sampleIndex];
+					gradient[j] += args->m_costPos*(dot - m_cstore->m_labels[sampleIndex])*m_cstore->m_samples[j][sampleIndex];
 				}
 				else {
-					gradient[j] += args->costNeg*(dot - m_cstore->m_labels[sampleIndex])*m_cstore->m_samples[j][sampleIndex];
+					gradient[j] += args->m_costNeg*(dot - m_cstore->m_labels[sampleIndex])*m_cstore->m_samples[j][sampleIndex];
 				}
 			}
 		}

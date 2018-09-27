@@ -66,12 +66,12 @@ void ColumnML::WriteLogregPredictions(float* x) {
 	ofs.close();
 }
 
-float ColumnML::L2regularization(float* x, float lambda) {
+float ColumnML::L2regularization(float* x, float lambda, AdditionalArguments* args) {
 	float regularizer = 0;
 	for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
 		regularizer += x[j]*x[j];
 	}
-	regularizer *= (lambda*0.5)/m_cstore->m_numSamples;
+	regularizer *= (lambda*0.5)/args->m_numSamples;
 
 	return regularizer;
 }
@@ -86,55 +86,79 @@ float ColumnML::L1regularization(float* x, float lambda) {
 	return regularizer;
 }
 
-float ColumnML::L2svmLoss(float* x, float costPos, float costNeg, float lambda) {
+float ColumnML::L2svmLoss(float* x, float lambda, AdditionalArguments* args) {
 	float loss = 0;
-	for(uint32_t i = 0; i < m_cstore->m_numSamples; i++) {
+	for(uint32_t i = args->m_firstSample; i < args->m_firstSample + args->m_numSamples; i++) {
 		float dot = getDot(x, i);
 		float temp = 1 - m_cstore->m_labels[i]*dot;
 		if (temp > 0) {
 			if (m_cstore->m_labels[i] > 0) {
-				loss += costPos*temp*temp;
+				loss += args->m_costPos*temp*temp;
 			}
 			else {
-				loss += costNeg*temp*temp;
+				loss += args->m_costNeg*temp*temp;
 			}
 		}
 	}
-	loss /= (float)(2*m_cstore->m_numSamples);
+	loss /= (float)(2*args->m_numSamples);
 	loss += L1regularization(x, lambda);
 
 	return loss;
 }
 
-float ColumnML::LogregLoss(float* x, float lambda) {
+float ColumnML::LogregLoss(float* x, float lambda, AdditionalArguments* args) {
 	float loss = 0;
-	for(uint32_t i = 0; i < m_cstore->m_numSamples; i++) {
+	for(uint32_t i = args->m_firstSample; i < args->m_firstSample + args->m_numSamples; i++) {
 		float dot = getDot(x, i);
-		float prediction = 1/(1+exp(-dot));
-		loss += m_cstore->m_labels[i]*log(prediction) + (1-m_cstore->m_labels[i])*log(1 - prediction);			
+		float prediction = 1.0/(1.0+exp(-dot));
+
+		float positiveLoss = log(prediction);
+		float negativeLoss = log(1 - prediction);
+
+		// This check is eliminate numerical unstableness when doing log, leading to inf.
+		if (isinf(positiveLoss)) {
+			positiveLoss = -std::numeric_limits<float>::max();
+		}
+		if (isinf(negativeLoss)) {
+			negativeLoss = -std::numeric_limits<float>::max();
+		}
+
+		loss += m_cstore->m_labels[i]*positiveLoss + (1-m_cstore->m_labels[i])*negativeLoss;
+
+		if(isnan(loss) || isnan(dot) || isnan(prediction) || isnan(log(prediction)) || isnan(log(1 - prediction)) ) {
+			cout << "--------------------------------------------------------------" << endl;
+			cout << "isnan for sample " << i << endl;
+			cout << "loss: " << loss << endl;
+			cout << "dot: " << dot << endl;
+			cout << "prediction: " << prediction << endl;
+			cout << "label: " << m_cstore->m_labels[i] << endl;
+			cout << "log(prediction): " << log(prediction) << endl;
+			cout << "log(1 - prediction): " << log(1 - prediction) << endl;
+			return 0;
+		}	
 	}
-	loss /= (float)m_cstore->m_numSamples;
+	loss /= (float)args->m_numSamples;
 	loss = -loss;
 	loss += L1regularization(x, lambda);
 
 	return loss;
 }
 
-float ColumnML::LinregLoss(float* x, float lambda) {
+float ColumnML::LinregLoss(float* x, float lambda, AdditionalArguments* args) {
 	float loss = 0;
-	for(uint32_t i = 0; i < m_cstore->m_numSamples; i++) {
+	for(uint32_t i = args->m_firstSample; i < args->m_firstSample + args->m_numSamples; i++) {
 		float dot = getDot(x, i);
 		loss += (dot - m_cstore->m_labels[i])*(dot - m_cstore->m_labels[i]);
 	}
-	loss /= (float)(2*m_cstore->m_numSamples);
+	loss /= (float)(2*args->m_numSamples);
 	loss += L1regularization(x, lambda);
 
 	return loss;
 }
 
-uint32_t ColumnML::LogregAccuracy(float* x, uint32_t startIndex, uint32_t length) {
+uint32_t ColumnML::LogregAccuracy(float* x, AdditionalArguments* args) {
 	uint32_t corrects = 0;
-	for(uint32_t i = startIndex; i < startIndex+length; i++) {
+	for(uint32_t i = args->m_firstSample; i < args->m_firstSample + args->m_numSamples; i++) {
 		float dot = getDot(x, i);
 		float prediction = 1/(1+exp(-dot));
 		if ( (prediction > 0.5 && m_cstore->m_labels[i] == 1.0) || (prediction < 0.5 && m_cstore->m_labels[i] == 0) ) {
@@ -145,11 +169,11 @@ uint32_t ColumnML::LogregAccuracy(float* x, uint32_t startIndex, uint32_t length
 	return corrects;
 }
 
-uint32_t ColumnML::LinregAccuracy(float* x, float decisionBoundary, int trueLabel, int falseLabel) {
+uint32_t ColumnML::LinregAccuracy(float* x, AdditionalArguments* args) {
 	uint32_t corrects = 0;
-	for(uint32_t i = 0; i < m_cstore->m_numSamples; i++) {
+	for(uint32_t i = args->m_firstSample; i < args->m_firstSample + args->m_numSamples; i++) {
 		float dot = getDot(x, i);
-		if ( (dot > decisionBoundary && m_cstore->m_labels[i] == trueLabel) || (dot < decisionBoundary && m_cstore->m_labels[i] == falseLabel) ) {
+		if ( (dot > args->m_decisionBoundary && m_cstore->m_labels[i] == args->m_trueLabel) || (dot < args->m_decisionBoundary && m_cstore->m_labels[i] == args->m_falseLabel) ) {
 			corrects++;
 		}
 	}
@@ -171,16 +195,16 @@ void ColumnML::SGD(
 	memset(gradient, 0, m_cstore->m_numFeatures*sizeof(float));
 
 	cout << "SGD ---------------------------------------" << endl;
-	uint32_t numMinibatches = m_cstore->m_numSamples/minibatchSize;
+	uint32_t numMinibatches = args->m_numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
-	uint32_t rest = m_cstore->m_numSamples - numMinibatches*minibatchSize;
+	uint32_t rest = args->m_numSamples - numMinibatches*minibatchSize;
 	cout << "rest: " << rest << endl;
 
 #ifdef PRINT_LOSS
 	cout << "Initial loss: " << Loss(type, x, lambda, args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-	cout << "Initial accuracy: " << Accuracy(type, x, args) << " corrects out of " << m_cstore->m_numSamples << endl;
+	cout << "Initial accuracy: " << Accuracy(type, x, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 
 	float scaledStepSize = stepSize/minibatchSize;
@@ -221,7 +245,7 @@ void ColumnML::SGD(
 			cout << Loss(type, x, lambda, args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-			cout << Accuracy(type, x, args) << " corrects out of " << m_cstore->m_numSamples << endl;
+			cout << Accuracy(type, x, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 		}
 	}
@@ -245,16 +269,16 @@ void ColumnML::AVX_SGD(
 	memset(gradient, 0, m_cstore->m_numFeatures*sizeof(float));
 
 	cout << "AVX_SGD ---------------------------------------" << endl;
-	uint32_t numMinibatches = m_cstore->m_numSamples/minibatchSize;
+	uint32_t numMinibatches = args->m_numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
-	uint32_t rest = m_cstore->m_numSamples - numMinibatches*minibatchSize;
+	uint32_t rest = args->m_numSamples - numMinibatches*minibatchSize;
 	cout << "rest: " << rest << endl;
 
 #ifdef PRINT_LOSS
 	cout << "Initial loss: " << Loss(type, x, lambda, args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-	cout << "Initial accuracy: " << Accuracy(type, x, args) << " corrects out of " << m_cstore->m_numSamples << endl;
+	cout << "Initial accuracy: " << Accuracy(type, x, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 
 	__m256 AVX_ones = _mm256_set1_ps(1.0);
@@ -341,7 +365,7 @@ void ColumnML::AVX_SGD(
 			cout << Loss(type, x, lambda, args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-			cout << Accuracy(type, x, args) << " corrects out of " << m_cstore->m_numSamples << endl;
+			cout << Accuracy(type, x, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 		}
 	}
@@ -349,7 +373,6 @@ void ColumnML::AVX_SGD(
 	free(x);
 	free(gradient);
 }
-
 
 void ColumnML::AVXrowwise_SGD(
 	ModelType type, 
@@ -370,8 +393,8 @@ void ColumnML::AVXrowwise_SGD(
 	float* gradient = (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
 	memset(gradient, 0, m_cstore->m_numFeatures*sizeof(float));
 
-	float* samples = (float*)aligned_alloc(64, m_cstore->m_numSamples*m_cstore->m_numFeatures*sizeof(float));
-	for (uint32_t i = 0; i < m_cstore->m_numSamples; i++) {
+	float* samples = (float*)aligned_alloc(64, args->m_numSamples*m_cstore->m_numFeatures*sizeof(float));
+	for (uint32_t i = 0; i < args->m_numSamples; i++) {
 		for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
 			samples[i*m_cstore->m_numFeatures + j] = m_cstore->m_samples[j][i];
 		}
@@ -381,7 +404,7 @@ void ColumnML::AVXrowwise_SGD(
 	cout << "Initial loss: " << Loss(type, x, lambda, args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-	cout << "Initial accuracy: " << Accuracy(type, x, args) << " corrects out of " << m_cstore->m_numSamples << endl;
+	cout << "Initial accuracy: " << Accuracy(type, x, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 
 	__m256 AVX_ones = _mm256_set1_ps(1.0);
@@ -396,14 +419,14 @@ void ColumnML::AVXrowwise_SGD(
 
 		double start = get_time();
 
-		for (uint32_t k = 0; k < m_cstore->m_numSamples; k++) {
+		for (uint32_t k = 0; k < args->m_numSamples; k++) {
 #ifdef SGD_SHUFFLE
 			uint32_t rand = 0;
 			_rdseed32_step(&rand);
-			uint32_t m = m_cstore->m_numSamples*((float)(rand-1)/(float)UINT_MAX);
+			uint32_t m = args->m_numSamples*((float)(rand-1)/(float)UINT_MAX);
 #else
 			uint32_t m = k;
-#endif
+#endif	
 			float dot = 0.0;
 			if (m_cstore->m_numFeatures >= 8) {
 				__m256 AVX_dot = _mm256_set1_ps(0.0);
@@ -457,7 +480,7 @@ void ColumnML::AVXrowwise_SGD(
 			cout << Loss(type, x, lambda, args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-			cout << Accuracy(type, x, args) << " corrects out of " << m_cstore->m_numSamples << endl;
+			cout << Accuracy(type, x, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 		}
 	}
@@ -519,10 +542,19 @@ static inline void DoStep(
 	timeStamp2 = get_time();
 	dotTime += (timeStamp2-timeStamp1);
 
-	float regularizer = (x[minibatchIndex[0]*cstore->m_numFeatures + coordinate] < 0) ? -scaledLambda : scaledLambda;
-	float step = scaledStepSize*gradient + regularizer;
-	
+	float step = scaledStepSize*gradient;
+
+	if (x[minibatchIndex[0]*cstore->m_numFeatures + coordinate] - step > scaledLambda) {
+		step += scaledLambda;
+	}
+	else if (x[minibatchIndex[0]*cstore->m_numFeatures + coordinate] - step < -scaledLambda) {
+		step -= scaledLambda;
+	}
+	else {
+		step = x[minibatchIndex[0]*cstore->m_numFeatures + coordinate];
+	}	
 	x[minibatchIndex[0]*cstore->m_numFeatures + coordinate] -= step;
+
 
 	for (uint32_t l = 0; l < numMinibatchesAtATime; l++) {
 		for (uint32_t i = 0; i < minibatchSize; i++) {
@@ -648,15 +680,15 @@ void ColumnML::SCD(
 	AdditionalArguments* args)
 {
 	cout << "SCD ---------------------------------------" << endl;
-	uint32_t numMinibatches = m_cstore->m_numSamples/minibatchSize;
+	uint32_t numMinibatches = args->m_numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
-	uint32_t rest = m_cstore->m_numSamples - numMinibatches*minibatchSize;
+	uint32_t rest = args->m_numSamples - numMinibatches*minibatchSize;
 	cout << "rest: " << rest << endl;
 
-	float* residual = (float*)aligned_alloc(64, m_cstore->m_numSamples*sizeof(float));
-	memset(residual, 0, m_cstore->m_numSamples*sizeof(float));
-	float* x = (float*)aligned_alloc(64, (numMinibatches + m_cstore->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
-	memset(x, 0, (numMinibatches + m_cstore->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
+	float* residual = (float*)aligned_alloc(64, args->m_numSamples*sizeof(float));
+	memset(residual, 0, args->m_numSamples*sizeof(float));
+	float* x = (float*)aligned_alloc(64, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
+	memset(x, 0, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
 	float* xFinal = (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
 	memset(xFinal, 0, m_cstore->m_numFeatures*sizeof(float));
 	
@@ -664,7 +696,7 @@ void ColumnML::SCD(
 	cout << "Initial loss: " << Loss(type, xFinal, lambda, args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-	cout << "Initial accuracy: " << Accuracy(type, xFinal, args) << " corrects out of " << m_cstore->m_numSamples << endl;
+	cout << "Initial accuracy: " << Accuracy(type, xFinal, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 
 	float* transformedColumn1 = nullptr;
@@ -693,7 +725,7 @@ void ColumnML::SCD(
 			if (numMinibatchesAtATime > 1) {
 				uint32_t m[numMinibatchesAtATime];
 				for (uint32_t l = 0; l < numMinibatchesAtATime; l++) {
-					m[l] = l*(numMinibatches/numMinibatchesAtATime)+k;
+					m[l] = l*(numMinibatches/numMinibatchesAtATime) + k;
 				}
 				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
 
@@ -750,7 +782,7 @@ void ColumnML::SCD(
 				cout << Loss(type, xFinal, lambda, args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-				cout << Accuracy(type, xFinal, args) << " corrects out of " << m_cstore->m_numSamples << endl;
+				cout << Accuracy(type, xFinal, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 			}
 		}
@@ -787,15 +819,15 @@ void ColumnML::AVX_SCD(
 	}
 
 	cout << "AVX_SCD ---------------------------------------" << endl;
-	uint32_t numMinibatches = m_cstore->m_numSamples/minibatchSize;
+	uint32_t numMinibatches = args->m_numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
-	uint32_t rest = m_cstore->m_numSamples - numMinibatches*minibatchSize;
+	uint32_t rest = args->m_numSamples - numMinibatches*minibatchSize;
 	cout << "rest: " << rest << endl;
 
-	float* residual = (float*)aligned_alloc(64, m_cstore->m_numSamples*sizeof(float));
-	memset(residual, 0, m_cstore->m_numSamples*sizeof(float));
-	float* x = (float*)aligned_alloc(64, (numMinibatches + m_cstore->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
-	memset(x, 0, (numMinibatches + m_cstore->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
+	float* residual = (float*)aligned_alloc(64, args->m_numSamples*sizeof(float));
+	memset(residual, 0, args->m_numSamples*sizeof(float));
+	float* x = (float*)aligned_alloc(64, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
+	memset(x, 0, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
 	float* xFinal = (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
 	memset(xFinal, 0, m_cstore->m_numFeatures*sizeof(float));
 
@@ -803,7 +835,7 @@ void ColumnML::AVX_SCD(
 	cout << "Initial loss: " << Loss(type, xFinal, lambda, args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-	cout << "Initial accuracy: " << Accuracy(type, xFinal, args) << " corrects out of " << m_cstore->m_numSamples << endl;
+	cout << "Initial accuracy: " << Accuracy(type, xFinal, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 
 	float* transformedColumn1 = NULL;
@@ -835,16 +867,33 @@ void ColumnML::AVX_SCD(
 		for (uint32_t m = 0; m < numMinibatches; m++) {
 			for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
 
-				m_cstore->ReturnDecompressedAndDecrypted(transformedColumn1, transformedColumn2, j, &m, 1, minibatchSize, useEncrypted, useCompressed, toIntegerScaler, decryptionTime, decompressionTime);
+#ifdef SCD_SHUFFLE
+				uint32_t rand = 0;
+				_rdseed32_step(&rand);
+				uint32_t coordinate = (m_cstore->m_numFeatures-1)*((float)(rand-1)/(float)UINT_MAX);
+#else
+				uint32_t coordinate = j;
+#endif
+
+				m_cstore->ReturnDecompressedAndDecrypted(transformedColumn1, transformedColumn2, coordinate, &m, 1, minibatchSize, useEncrypted, useCompressed, toIntegerScaler, decryptionTime, decompressionTime);
 
 				if ( (epoch+1)%(residualUpdatePeriod+1) == 0 ) {
-					UpdateResidual(residual, j, &m, 1, minibatchSize, transformedColumn2, xFinal);
+					UpdateResidual(residual, coordinate, &m, 1, minibatchSize, transformedColumn2, xFinal);
 				}
 				else {
 					float step = AVX_GetStep(type, residual, j, m, minibatchSize, m_cstore, transformedColumn2, scaledStepSize, dotTime);
-					float regularizer = (x[m*m_cstore->m_numFeatures + j] < 0) ? -scaledLambda : scaledLambda;
-					step += regularizer;
-					x[m*m_cstore->m_numFeatures + j] += step;
+
+					if (x[m*m_cstore->m_numFeatures + coordinate] + step > -scaledLambda) {
+						step += scaledLambda;
+					}
+					else if (x[m*m_cstore->m_numFeatures + coordinate] + step < scaledLambda) {
+						step -= scaledLambda;
+					}
+					else {
+						step = -x[m*m_cstore->m_numFeatures + coordinate];
+					}
+					x[m*m_cstore->m_numFeatures + coordinate] += step;
+
 					AVX_ApplyStep(step, residual, m, minibatchSize, transformedColumn2, residualUpdateTime);
 				}
 			}
@@ -876,7 +925,7 @@ void ColumnML::AVX_SCD(
 				cout << Loss(type, xFinal, lambda, args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-				cout << Accuracy(type, xFinal, args) << " corrects out of " << m_cstore->m_numSamples << endl;
+				cout << Accuracy(type, xFinal, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 			}
 		}
@@ -991,11 +1040,20 @@ void* batchThread(void* args) {
 				
 				pthread_barrier_wait(r->m_barrier);
 				if (r->m_tid == 0) {
-					float regularizer = (xFinal[j] < 0) ? -scaledLambda : scaledLambda;
 					for (uint32_t t = 1; t < r->m_numThreads; t++) {
 						r->m_stepsFromThreads[0] += r->m_stepsFromThreads[t];
 					}
-					r->m_stepsFromThreads[0] += regularizer;
+
+					if (xFinal[j] + r->m_stepsFromThreads[0] > -scaledLambda) {
+						r->m_stepsFromThreads[0] += scaledLambda;
+					}
+					else if (xFinal[j] + r->m_stepsFromThreads[0] < scaledLambda) {
+						r->m_stepsFromThreads[0] -= scaledLambda;
+					}
+					else {
+						r->m_stepsFromThreads[0] = -xFinal[j];
+					}
+
 					for (uint32_t t = 0; t < r->m_numThreads; t++) {
 						r->m_stepsFromThreads[t] = r->m_stepsFromThreads[0];
 					}
@@ -1044,8 +1102,17 @@ void* batchThread(void* args) {
 					}
 					else {
 						float step = AVX_GetStep(r->m_type, r->m_residual, j, m, r->m_minibatchSize, cstore, transformedColumn2, scaledStepSize, r->m_dotTime);
-						float regularizer = (r->m_x[m*cstore->m_numFeatures + j] < 0) ? -scaledLambda : scaledLambda;
-						step += regularizer;
+						
+						if (r->m_x[m*cstore->m_numFeatures + j] + step > -scaledLambda) {
+							step += scaledLambda;
+						}
+						else if (r->m_x[m*cstore->m_numFeatures + j] + step < scaledLambda) {
+							step -= scaledLambda;
+						}
+						else {
+							step = -r->m_x[m*cstore->m_numFeatures + j];
+						}
+
 						r->m_x[m*cstore->m_numFeatures + j] += step;
 						AVX_ApplyStep(step, r->m_residual, m, r->m_minibatchSize, transformedColumn2, r->m_residualUpdateTime);
 					}
@@ -1140,23 +1207,23 @@ double ColumnML::AVXmulti_SCD (
 	batch_thread_data thread_args[MAX_NUM_THREADS];
 	cpu_set_t set;
 
-	float* residual = (float*)aligned_alloc(64, m_cstore->m_numSamples*sizeof(float));
-	memset(residual, 0, m_cstore->m_numSamples*sizeof(float));
+	float* residual = (float*)aligned_alloc(64, args->m_numSamples*sizeof(float));
+	memset(residual, 0, args->m_numSamples*sizeof(float));
 
-	uint32_t numMinibatches = m_cstore->m_numSamples/minibatchSize;
+	uint32_t numMinibatches = args->m_numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;
-	uint32_t rest = m_cstore->m_numSamples - numMinibatches*minibatchSize;
+	uint32_t rest = args->m_numSamples - numMinibatches*minibatchSize;
 	cout << "rest: " << rest << endl;
 
-	float* x = (float*)aligned_alloc(64, (numMinibatches + m_cstore->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
-	memset(x, 0, (numMinibatches + m_cstore->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
+	float* x = (float*)aligned_alloc(64, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
+	memset(x, 0, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
 	float stepsFromThreads[MAX_NUM_THREADS];
 
 #ifdef PRINT_LOSS
 	cout << "Initial loss: " << Loss(type, x, lambda, args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-	cout << "Initial accuracy: " << Accuracy(type, x, args) << " corrects out of " << m_cstore->m_numSamples << endl;
+	cout << "Initial accuracy: " << Accuracy(type, x, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 
 	uint32_t startingBatch = 0;
