@@ -139,6 +139,9 @@ float ColumnML::LogregLoss(float* x, float lambda, AdditionalArguments* args) {
 	}
 	loss /= (float)args->m_numSamples;
 	loss = -loss;
+
+	// cout << "LogregLoss without L1 penalty: " << loss << endl;
+
 	loss += L1regularization(x, lambda);
 
 	return loss;
@@ -226,7 +229,14 @@ void ColumnML::SGD(
 			}
 			for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
 				float regularizer = (x[j] < 0) ? -scaledLambda : scaledLambda;
-				x[j] -= scaledStepSize*gradient[j] + regularizer;
+				if (args->m_constantStepSize) {
+					x[j] -= scaledStepSize*gradient[j] + regularizer;
+				}
+				else {
+					regularizer /= (float)(epoch+1);
+					x[j] -= scaledStepSize/(float)(epoch+1)*gradient[j] + regularizer;
+				}
+				
 				gradient[j] = 0.0;
 			}
 		}
@@ -308,7 +318,13 @@ void ColumnML::AVX_SGD(
 				dot = (dot-m_cstore->m_labels[minibatchOffset]);
 				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
 					float regularizer = (x[j] < 0) ? -scaledLambda : scaledLambda;
-					x[j] -= scaledStepSize*dot*m_cstore->m_samples[j][minibatchOffset] + regularizer;
+					if (args->m_constantStepSize) {
+						x[j] -= scaledStepSize*dot*m_cstore->m_samples[j][minibatchOffset] + regularizer;
+					}
+					else {
+						regularizer /= ((float)(epoch+1));
+						x[j] -= scaledStepSize/(float)(epoch+1)*dot*m_cstore->m_samples[j][minibatchOffset] + regularizer;
+					}
 				}
 			}
 			else {
@@ -344,7 +360,13 @@ void ColumnML::AVX_SGD(
 				}
 				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
 					float regularizer = (x[j] < 0) ? -scaledLambda : scaledLambda;
-					x[j] -= scaledStepSize*gradient[j] + regularizer;
+					if (args->m_constantStepSize) {
+						x[j] -= scaledStepSize*gradient[j] + regularizer;
+					}
+					else {
+						regularizer /= ((float)(epoch+1));
+						x[j] -= scaledStepSize/(float)(epoch+1)*gradient[j] + regularizer;
+					}
 					gradient[j] = 0.0;
 				}
 			}
@@ -388,6 +410,8 @@ void ColumnML::AVXrowwise_SGD(
 		exit(1);
 	}
 
+	cout << "AVXrowwise_SGD ---------------------------------------" << endl;
+
 	float* x = (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
 	memset(x, 0, m_cstore->m_numFeatures*sizeof(float));
 	float* gradient = (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
@@ -426,7 +450,8 @@ void ColumnML::AVXrowwise_SGD(
 			uint32_t m = args->m_numSamples*((float)(rand-1)/(float)UINT_MAX);
 #else
 			uint32_t m = k;
-#endif	
+#endif
+
 			float dot = 0.0;
 			if (m_cstore->m_numFeatures >= 8) {
 				__m256 AVX_dot = _mm256_set1_ps(0.0);
@@ -445,7 +470,12 @@ void ColumnML::AVXrowwise_SGD(
 			if (type == logreg) {
 				dot = 1/(1+exp(-dot));
 			}
-			dot = scaledStepSize*(dot-m_cstore->m_labels[m]);
+			if (args->m_constantStepSize) {
+				dot = scaledStepSize*(dot-m_cstore->m_labels[m]);
+			}
+			else {
+				dot = scaledStepSize/(float)(epoch+1)*(dot-m_cstore->m_labels[m]);
+			}
 
 			if (m_cstore->m_numFeatures >= 8) {
 				__m256 AVX_dot = _mm256_set1_ps(dot);
@@ -456,12 +486,20 @@ void ColumnML::AVXrowwise_SGD(
 					__m256 AVX_regularizer = _mm256_and_ps(_mm256_cmp_ps(AVX_x, AVX_zeros, 1), AVX_minusScaledLambda);
 					AVX_regularizer = _mm256_or_ps(AVX_regularizer, _mm256_and_ps(_mm256_cmp_ps(AVX_x, AVX_zeros, 13), AVX_scaledLambda) );
 
+					if (!args->m_constantStepSize) {
+						__m256 AVX_temp = _mm256_set1_ps((float)(epoch+1));
+						AVX_regularizer = _mm256_div_ps(AVX_regularizer, AVX_temp);
+					}
+
 					AVX_x = _mm256_sub_ps(AVX_x, _mm256_add_ps(_mm256_mul_ps(AVX_dot, AVX_samples), AVX_regularizer));
 					_mm256_store_ps(x+j, AVX_x);
 				}
 			}
 			for (uint32_t j = m_cstore->m_numFeatures-(m_cstore->m_numFeatures%8); j < m_cstore->m_numFeatures; j++) {
 				float regularizer = (x[j] < 0) ? -scaledLambda : scaledLambda;
+				if (!args->m_constantStepSize) {
+					regularizer /= (float)(epoch+1);
+				}
 				x[j] -= dot*m_cstore->m_samples[j][m] + regularizer;
 			}
 		}
@@ -1124,11 +1162,12 @@ void* batchThread(void* args) {
 
 			if (r->m_tid == 0) {
 				if ( (epoch+1)%(r->m_residualUpdatePeriod+1) == 0 ) {
-					cout << "--> PERFORMED RESIDUAL UPDATE !!!" << endl;
-
 					end = get_time();
 					epochTimes += (end-start);
+#ifdef PRINT_TIMING
+					cout << "--> PERFORMED RESIDUAL UPDATE !!!" << endl;
 					cout << "Time for one global residual update: " << end-start << endl;
+#endif
 				}
 				else {
 					GetAveragedX(r->m_numMinibatches, 1, cstore, xFinal, r->m_x);

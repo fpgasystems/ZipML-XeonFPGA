@@ -56,6 +56,8 @@ struct AdditionalArguments
 	float m_decisionBoundary;
 	float m_trueLabel;
 	float m_falseLabel;
+
+	bool m_constantStepSize;
 	
 };
 
