@@ -1131,27 +1131,35 @@ void* batchThread(void* args) {
 			for (uint32_t m = r->m_startingBatch; m < r->m_startingBatch + r->m_numBatchesToProcess; m++) {
 				for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
 
-					cstore->ReturnDecompressedAndDecrypted(transformedColumn1, transformedColumn2, j, &m, 1, r->m_minibatchSize, r->m_useEncrypted, r->m_useCompressed, r->m_toIntegerScaler, r->m_decryptionTime, r->m_decompressionTime);
+#ifdef SCD_SHUFFLE
+					uint32_t rand = 0;
+					_rdseed32_step(&rand);
+					uint32_t coordinate = (cstore->m_numFeatures-1)*((float)(rand-1)/(float)UINT_MAX);
+#else
+					uint32_t coordinate = j;
+#endif
+
+					cstore->ReturnDecompressedAndDecrypted(transformedColumn1, transformedColumn2, coordinate, &m, 1, r->m_minibatchSize, r->m_useEncrypted, r->m_useCompressed, r->m_toIntegerScaler, r->m_decryptionTime, r->m_decompressionTime);
 
 					if ( (epoch+1)%(r->m_residualUpdatePeriod+1) == 0 ) {
 						if (r->m_tid == 0) {
-							UpdateResidual(r->m_residual, j, &m, 1, r->m_minibatchSize, transformedColumn2, xFinal);
+							UpdateResidual(r->m_residual, coordinate, &m, 1, r->m_minibatchSize, transformedColumn2, xFinal);
 						}
 					}
 					else {
-						float step = AVX_GetStep(r->m_type, r->m_residual, j, m, r->m_minibatchSize, cstore, transformedColumn2, scaledStepSize, r->m_dotTime);
+						float step = AVX_GetStep(r->m_type, r->m_residual, coordinate, m, r->m_minibatchSize, cstore, transformedColumn2, scaledStepSize, r->m_dotTime);
 						
-						if (r->m_x[m*cstore->m_numFeatures + j] + step > -scaledLambda) {
+						if (r->m_x[m*cstore->m_numFeatures + coordinate] + step > -scaledLambda) {
 							step += scaledLambda;
 						}
-						else if (r->m_x[m*cstore->m_numFeatures + j] + step < scaledLambda) {
+						else if (r->m_x[m*cstore->m_numFeatures + coordinate] + step < scaledLambda) {
 							step -= scaledLambda;
 						}
 						else {
-							step = -r->m_x[m*cstore->m_numFeatures + j];
+							step = -r->m_x[m*cstore->m_numFeatures + coordinate];
 						}
 
-						r->m_x[m*cstore->m_numFeatures + j] += step;
+						r->m_x[m*cstore->m_numFeatures + coordinate] += step;
 						AVX_ApplyStep(step, r->m_residual, m, r->m_minibatchSize, transformedColumn2, r->m_residualUpdateTime);
 					}
 				}

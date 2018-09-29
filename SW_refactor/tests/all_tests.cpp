@@ -77,12 +77,9 @@ int main(int argc, char* argv[]) {
 
 	// columnML->AVX_SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
 
-	
 	// columnML->SCD(type, nullptr, numEpochs, numSamples - (numSamples%8), 4, lambda, 1, 10000, false, false, VALUE_TO_INT_SCALER, &args);
 
 	// columnML->AVX_SCD(type, nullptr, numEpochs, numSamples - (numSamples%8), 4, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
-
-	// columnML->AVX_SCD(type, nullptr, numEpochs, minibatchSize, 4, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
 
 	// columnML->AVXmulti_SCD(type, true, nullptr, numEpochs, minibatchSize, 4, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args, 14);
 
@@ -107,7 +104,6 @@ int main(int argc, char* argv[]) {
 	// columnML->AVX_SGD(type, nullptr, numEpochs, 512, 0.1, lambda, &args);
 
 
-
 	// float* xHistory_SCD = new float[numEpochs*columnML->m_cstore->m_numFeatures];
 	// columnML->AVXmulti_SCD(type, true, xHistory_SCD, numEpochs, minibatchSize, 10, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args, 14);
 
@@ -129,13 +125,13 @@ int main(int argc, char* argv[]) {
 	// }
 
 
-	Convergence(columnML, numEpochs);
+	// Convergence(columnML, numEpochs);
 
 	// StepSizeSweepSGD(columnML, type, numEpochs, minibatchSize, lambda, args);
 
 	// StepSizeSweepSCD(columnML, type, numEpochs, numSamples, lambda, args);
 
-	// Performance(columnML, type, numEpochs, numSamples, lambda, args);
+	Performance(columnML, type, numEpochs, numSamples, lambda, args);
 	
 	delete columnML;
 
@@ -153,7 +149,7 @@ void Convergence(ColumnML* obj, uint32_t numEpochs) {
 
 	float lambda = 0.001;
 
-	obj->AVX_SGD(type, nullptr, numEpochs, 1, 0.01, lambda, &args);
+	obj->AVXrowwise_SGD(type, nullptr, numEpochs, 1, 0.01, lambda, &args);
 
 	obj->AVX_SGD(type, nullptr, numEpochs, 8, 0.1, lambda, &args);
 
@@ -196,6 +192,7 @@ void Performance(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t min
 
 	obj->AVX_SGD(type, nullptr, numEpochs, 512, 0.1, lambda, &args);
 
-	obj->AVX_SCD(type, nullptr, numEpochs, obj->m_cstore->m_numSamples - (obj->m_cstore->m_numSamples%8), 10, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
+	obj->AVX_SCD(type, nullptr, numEpochs, obj->m_cstore->m_numSamples - (obj->m_cstore->m_numSamples%8), 4, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
 
+	obj->AVX_SCD(type, nullptr, numEpochs, 16384, 4, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
 }
