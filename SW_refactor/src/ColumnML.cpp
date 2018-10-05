@@ -48,8 +48,8 @@ void ColumnML::printTimeout() {
 	cout << "decompressorOutFifoFreeCount: " << decompressorOutFifoFreeCount << endl;
 }
 
-void ColumnML::WriteLogregPredictions(float* x) {
-	ofstream ofs ("predictions.txt", ofstream::out);
+void ColumnML::WriteLogregPredictions(char* fileName, float* x) {
+	ofstream ofs (fileName, ofstream::out);
 	for(uint32_t i = 0; i < m_cstore->m_numSamples; i++) {
 		float dot = 0.0;
 		for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
@@ -115,7 +115,7 @@ float ColumnML::LogregLoss(float* x, float lambda, AdditionalArguments* args) {
 		float positiveLoss = log(prediction);
 		float negativeLoss = log(1 - prediction);
 
-		// This check is eliminate numerical unstableness when doing log, leading to inf.
+		// This check is to eliminate numerical unstableness when doing log, leading to inf.
 		if (isinf(positiveLoss)) {
 			positiveLoss = -std::numeric_limits<float>::max();
 		}
@@ -123,7 +123,8 @@ float ColumnML::LogregLoss(float* x, float lambda, AdditionalArguments* args) {
 			negativeLoss = -std::numeric_limits<float>::max();
 		}
 
-		loss += m_cstore->m_labels[i]*positiveLoss + (1-m_cstore->m_labels[i])*negativeLoss;
+		float temp = m_cstore->m_labels[i]*positiveLoss + (1-m_cstore->m_labels[i])*negativeLoss;
+		loss += temp;
 
 		if(isnan(loss) || isnan(dot) || isnan(prediction) || isnan(log(prediction)) || isnan(log(1 - prediction)) ) {
 			cout << "--------------------------------------------------------------" << endl;
@@ -135,8 +136,9 @@ float ColumnML::LogregLoss(float* x, float lambda, AdditionalArguments* args) {
 			cout << "log(prediction): " << log(prediction) << endl;
 			cout << "log(1 - prediction): " << log(1 - prediction) << endl;
 			return 0;
-		}	
+		}
 	}
+
 	loss /= (float)args->m_numSamples;
 	loss = -loss;
 
@@ -549,6 +551,30 @@ static inline void UpdateResidual(
 	}
 }
 
+static inline void AVX_UpdateResidual(
+	float* residual,
+	uint32_t coordinate,
+	uint32_t minibatchIndex,
+	uint32_t minibatchSize,
+	float* transformedColumn,
+	float* xFinal)
+{
+	for (uint32_t i = 0; i < minibatchSize; i+=8) {
+		__m256 AVX_residual = _mm256_load_ps(residual + minibatchIndex*minibatchSize + i);
+		__m256 AVX_xFinal = _mm256_set1_ps(xFinal[coordinate]);
+		__m256 AVX_samples = _mm256_load_ps(transformedColumn + i);
+
+		if (coordinate == 0) {
+			AVX_residual = _mm256_mul_ps(AVX_xFinal, AVX_samples);
+		}
+		else {
+			AVX_residual = _mm256_fmadd_ps(AVX_xFinal, AVX_samples, AVX_residual);
+		}
+
+		_mm256_store_ps(residual + minibatchIndex*minibatchSize + i, AVX_residual);
+	}
+}
+
 static inline void DoStep(
 	ModelType type,
 	float* residual,
@@ -916,7 +942,7 @@ void ColumnML::AVX_SCD(
 				m_cstore->ReturnDecompressedAndDecrypted(transformedColumn1, transformedColumn2, coordinate, &m, 1, minibatchSize, useEncrypted, useCompressed, toIntegerScaler, decryptionTime, decompressionTime);
 
 				if ( (epoch+1)%(residualUpdatePeriod+1) == 0 ) {
-					UpdateResidual(residual, coordinate, &m, 1, minibatchSize, transformedColumn2, xFinal);
+					AVX_UpdateResidual(residual, coordinate, m, minibatchSize, transformedColumn2, xFinal);
 				}
 				else {
 					float step = AVX_GetStep(type, residual, j, m, minibatchSize, m_cstore, transformedColumn2, scaledStepSize, dotTime);
@@ -938,7 +964,11 @@ void ColumnML::AVX_SCD(
 		}
 
 		if ( (epoch+1)%(residualUpdatePeriod+1) == 0 ) {
+#ifdef PRINT_TIMING
+			double end = get_time();
 			cout << "--> PERFORMED RESIDUAL UPDATE !!!" << endl;
+			cout << "Time for one epoch: " << end-start << endl;
+#endif
 		}
 		else {
 			double timeStamp1 = get_time();
@@ -1001,6 +1031,7 @@ typedef struct {
 	uint32_t m_numThreads;
 
 	float* m_x;
+	float* m_xFinal;
 	float* m_residual;
 	float* m_stepsFromThreads;
 	uint32_t m_startingBatch;
@@ -1027,12 +1058,6 @@ void* batchThread(void* args) {
 	}
 	else {
 		transformedColumn2 = (float*)aligned_alloc(64, r->m_minibatchSize*sizeof(float));
-	}
-
-	float* xFinal = NULL;
-	if (r->m_tid == 0) {
-		xFinal= (float*)aligned_alloc(64, cstore->m_numFeatures*sizeof(float));
-		memset(xFinal, 0, cstore->m_numFeatures*sizeof(float));
 	}
 
 	double start, end, epochTimes;
@@ -1082,20 +1107,20 @@ void* batchThread(void* args) {
 						r->m_stepsFromThreads[0] += r->m_stepsFromThreads[t];
 					}
 
-					if (xFinal[j] + r->m_stepsFromThreads[0] > -scaledLambda) {
+					if (r->m_xFinal[j] + r->m_stepsFromThreads[0] > -scaledLambda) {
 						r->m_stepsFromThreads[0] += scaledLambda;
 					}
-					else if (xFinal[j] + r->m_stepsFromThreads[0] < scaledLambda) {
+					else if (r->m_xFinal[j] + r->m_stepsFromThreads[0] < scaledLambda) {
 						r->m_stepsFromThreads[0] -= scaledLambda;
 					}
 					else {
-						r->m_stepsFromThreads[0] = -xFinal[j];
+						r->m_stepsFromThreads[0] = -r->m_xFinal[j];
 					}
 
 					for (uint32_t t = 0; t < r->m_numThreads; t++) {
 						r->m_stepsFromThreads[t] = r->m_stepsFromThreads[0];
 					}
-					xFinal[j] += r->m_stepsFromThreads[0];
+					r->m_xFinal[j] += r->m_stepsFromThreads[0];
 				}
 				pthread_barrier_wait(r->m_barrier);
 
@@ -1114,39 +1139,40 @@ void* batchThread(void* args) {
 #endif
 				if (r->m_xHistory != NULL) {
 					for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
-						r->m_xHistory[epoch*cstore->m_numFeatures + j] = xFinal[j];
+						r->m_xHistory[epoch*cstore->m_numFeatures + j] = r->m_xFinal[j];
 					}
 				}
 				else {
 #ifdef PRINT_LOSS
-					cout << r->m_obj->Loss(r->m_type, xFinal, r->m_lambda, r->m_args) << endl;
+					cout << r->m_obj->Loss(r->m_type, r->m_xFinal, r->m_lambda, r->m_args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-					cout << r->m_obj->Accuracy(r->m_type, xFinal, r->m_args) << " corrects out of " << cstore->m_numSamples << endl;
+					cout << r->m_obj->Accuracy(r->m_type, r->m_xFinal, r->m_args) << " corrects out of " << cstore->m_numSamples << endl;
 #endif
 				}
 			}
 		}
 		else {
-			for (uint32_t m = r->m_startingBatch; m < r->m_startingBatch + r->m_numBatchesToProcess; m++) {
-				for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
-
-#ifdef SCD_SHUFFLE
-					uint32_t rand = 0;
-					_rdseed32_step(&rand);
-					uint32_t coordinate = (cstore->m_numFeatures-1)*((float)(rand-1)/(float)UINT_MAX);
-#else
-					uint32_t coordinate = j;
-#endif
-
-					cstore->ReturnDecompressedAndDecrypted(transformedColumn1, transformedColumn2, coordinate, &m, 1, r->m_minibatchSize, r->m_useEncrypted, r->m_useCompressed, r->m_toIntegerScaler, r->m_decryptionTime, r->m_decompressionTime);
-
-					if ( (epoch+1)%(r->m_residualUpdatePeriod+1) == 0 ) {
-						if (r->m_tid == 0) {
-							UpdateResidual(r->m_residual, coordinate, &m, 1, r->m_minibatchSize, transformedColumn2, xFinal);
-						}
+			if ( (epoch+1)%(r->m_residualUpdatePeriod+1) == 0 ) {
+				for (uint32_t m = r->m_startingBatch; m < r->m_startingBatch + r->m_numBatchesToProcess; m++) {
+					for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
+						cstore->ReturnDecompressedAndDecrypted(transformedColumn1, transformedColumn2, j, &m, 1, r->m_minibatchSize, r->m_useEncrypted, r->m_useCompressed, r->m_toIntegerScaler, r->m_decryptionTime, r->m_decompressionTime);
+						AVX_UpdateResidual(r->m_residual, j, m, r->m_minibatchSize, transformedColumn2, r->m_xFinal);
 					}
-					else {
+				}
+			}
+			else {
+				for (uint32_t m = r->m_startingBatch; m < r->m_startingBatch + r->m_numBatchesToProcess; m++) {
+					for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
+#ifdef SCD_SHUFFLE
+						uint32_t rand = 0;
+						_rdseed32_step(&rand);
+						uint32_t coordinate = (cstore->m_numFeatures-1)*((float)(rand-1)/(float)UINT_MAX);
+#else
+						uint32_t coordinate = j;
+#endif
+						cstore->ReturnDecompressedAndDecrypted(transformedColumn1, transformedColumn2, coordinate, &m, 1, r->m_minibatchSize, r->m_useEncrypted, r->m_useCompressed, r->m_toIntegerScaler, r->m_decryptionTime, r->m_decompressionTime);
+						
 						float step = AVX_GetStep(r->m_type, r->m_residual, coordinate, m, r->m_minibatchSize, cstore, transformedColumn2, scaledStepSize, r->m_dotTime);
 						
 						if (r->m_x[m*cstore->m_numFeatures + coordinate] + step > -scaledLambda) {
@@ -1160,7 +1186,7 @@ void* batchThread(void* args) {
 						}
 
 						r->m_x[m*cstore->m_numFeatures + coordinate] += step;
-						AVX_ApplyStep(step, r->m_residual, m, r->m_minibatchSize, transformedColumn2, r->m_residualUpdateTime);
+						AVX_ApplyStep(step, r->m_residual, m, r->m_minibatchSize, transformedColumn2, r->m_residualUpdateTime);	
 					}
 				}
 			}
@@ -1178,7 +1204,7 @@ void* batchThread(void* args) {
 #endif
 				}
 				else {
-					GetAveragedX(r->m_numMinibatches, 1, cstore, xFinal, r->m_x);
+					GetAveragedX(r->m_numMinibatches, 1, cstore, r->m_xFinal, r->m_x);
 					end = get_time();
 					epochTimes += (end-start);
 #ifdef PRINT_TIMING
@@ -1186,16 +1212,16 @@ void* batchThread(void* args) {
 #endif
 					if (r->m_xHistory != NULL) {
 						for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
-							r->m_xHistory[epoch_index*cstore->m_numFeatures + j] = xFinal[j];
+							r->m_xHistory[epoch_index*cstore->m_numFeatures + j] = r->m_xFinal[j];
 						}
 						epoch_index++;
 					}
 					else {
 #ifdef PRINT_LOSS
-						cout << r->m_obj->Loss(r->m_type, xFinal, r->m_lambda, r->m_args) << endl;
+						cout << r->m_obj->Loss(r->m_type, r->m_xFinal, r->m_lambda, r->m_args) << endl;
 #endif
 #ifdef PRINT_ACCURACY
-						cout << r->m_obj->Accuracy(r->m_type, xFinal, r->m_args) << " corrects out of " << cstore->m_numSamples << endl;
+						cout << r->m_obj->Accuracy(r->m_type, r->m_xFinal, r->m_args) << " corrects out of " << cstore->m_numSamples << endl;
 #endif
 					}
 				}
@@ -1213,9 +1239,6 @@ void* batchThread(void* args) {
 	}
 	else {
 		free(transformedColumn2);
-	}
-	if (r->m_tid == 0) {
-		free(xFinal);
 	}
 
 	return NULL;
@@ -1266,6 +1289,9 @@ double ColumnML::AVXmulti_SCD (
 	memset(x, 0, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
 	float stepsFromThreads[MAX_NUM_THREADS];
 
+	float* xFinal= (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
+	memset(xFinal, 0, m_cstore->m_numFeatures*sizeof(float));
+
 #ifdef PRINT_LOSS
 	cout << "Initial loss: " << Loss(type, x, lambda, args) << endl;
 #endif
@@ -1300,6 +1326,7 @@ double ColumnML::AVXmulti_SCD (
 		thread_args[n].m_numThreads = numThreads;
 
 		thread_args[n].m_x = x;
+		thread_args[n].m_xFinal = xFinal;
 		thread_args[n].m_residual = residual;
 		thread_args[n].m_stepsFromThreads = stepsFromThreads;
 		thread_args[n].m_startingBatch = startingBatch;
@@ -1339,6 +1366,7 @@ double ColumnML::AVXmulti_SCD (
 	cout << "residualUpdateTime: " << residualUpdateTime/numThreads << endl;
 
 	free(x);
+	free(xFinal);
 	free(residual);
 
 	return thread_args[0].m_averageEpochTime;

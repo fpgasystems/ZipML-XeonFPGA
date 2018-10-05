@@ -67,7 +67,7 @@ logreg = SGDClassifier(
 	penalty='l1', 
 	alpha=0.001,
 	fit_intercept=False, 
-	max_iter=1, 
+	max_iter=10, 
 	shuffle=True, 
 	verbose=2, 
 	n_jobs=1, 
@@ -77,10 +77,10 @@ logreg = SGDClassifier(
 	warm_start=True, 
 	average=False)
 
-for epoch in range(0,10):
+for epoch in range(0,1):
 	start = time.time()
 	logreg.fit(X_norm, y)
 	end = time.time()
-	# loss = log_loss(y, logreg.predict_proba(X_norm))
-	# print('epoch' + str(epoch) + ', loss: ' + str(loss))
+	loss = log_loss(y, logreg.predict_proba(X_norm))
+	print('epoch' + str(epoch) + ', loss: ' + str(loss))
 	print('time per epoch: ' + str(end-start))

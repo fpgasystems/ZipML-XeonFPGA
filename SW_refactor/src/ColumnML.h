@@ -32,9 +32,9 @@
 using namespace std;
 
 // #define PRINT_TIMING
-#define PRINT_LOSS
+// #define PRINT_LOSS
 // #define PRINT_ACCURACY
-#define SGD_SHUFFLE
+// #define SGD_SHUFFLE
 // #define SCD_SHUFFLE
 
 #define MAX_NUM_THREADS 14
@@ -92,7 +92,14 @@ public:
 
 	void printTimeout();
 
-	void WriteLogregPredictions(float* x);
+	void WriteLogregPredictions(char* fileName, float* x);
+	void LoadModel(char* fileName, float* x, uint32_t numFeatures) {
+		cout << "LoadModel from " << fileName << endl;
+		FILE* f = fopen(fileName, "r");
+		size_t readsize = fread(x, sizeof(double), numFeatures, f);
+		cout << "readsize: " << readsize << endl;
+		fclose(f);
+	}
 
 	float L2regularization(float* x, float lambda, AdditionalArguments* args);
 	float L1regularization(float* x, float lambda);
