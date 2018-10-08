@@ -18,36 +18,6 @@
 
 using namespace std;
 
-void ColumnML::printTimeout() {
-	uint32_t numRequestedReads = m_interfaceFPGA->readFromMemory32('i', 0);
-	uint32_t numReceivedReads = m_interfaceFPGA->readFromMemory32('i', 1);
-	uint32_t residualNumReceivedReads = m_interfaceFPGA->readFromMemory32('i', 2);
-	uint32_t labelsNumReceivedReads = m_interfaceFPGA->readFromMemory32('i', 3);
-	uint32_t samplesNumReceivedReads = m_interfaceFPGA->readFromMemory32('i', 4);
-	uint32_t residualNumWriteRequests = m_interfaceFPGA->readFromMemory32('i', 5);
-	uint32_t stepNumWriteRequests = m_interfaceFPGA->readFromMemory32('i', 6);
-	uint32_t numWriteResponses = m_interfaceFPGA->readFromMemory32('i', 7);
-	uint32_t completedEpochs = m_interfaceFPGA->readFromMemory32('i', 8);
-	uint32_t reorderFreeCount = m_interfaceFPGA->readFromMemory32('i', 9);
-	uint32_t featureUpdateIndex = m_interfaceFPGA->readFromMemory32('i', 10);
-	uint32_t writeBatchIndex = m_interfaceFPGA->readFromMemory32('i', 11);
-	uint32_t decompressorOutFifoFreeCount = m_interfaceFPGA->readFromMemory32('i', 12);
-
-	cout << "numRequestedReads: " << numRequestedReads << endl;
-	cout << "numReceivedReads: " << numReceivedReads << endl;
-	cout << "residualNumReceivedReads: " << residualNumReceivedReads << endl;
-	cout << "labelsNumReceivedReads: " << labelsNumReceivedReads << endl;
-	cout << "samplesNumReceivedReads: " << samplesNumReceivedReads << endl;
-	cout << "residualNumWriteRequests: " << residualNumWriteRequests << endl;
-	cout << "stepNumWriteRequests: " << stepNumWriteRequests << endl;
-	cout << "numWriteResponses: " << numWriteResponses << endl;
-	cout << "completedEpochs: " << completedEpochs << endl;
-	cout << "reorderFreeCount: " << reorderFreeCount << endl;
-	cout << "featureUpdateIndex: " << featureUpdateIndex << endl;
-	cout << "writeBatchIndex: " << writeBatchIndex << endl;
-	cout << "decompressorOutFifoFreeCount: " << decompressorOutFifoFreeCount << endl;
-}
-
 void ColumnML::WriteLogregPredictions(char* fileName, float* x) {
 	ofstream ofs (fileName, ofstream::out);
 	for(uint32_t i = 0; i < m_cstore->m_numSamples; i++) {
@@ -769,7 +739,7 @@ void ColumnML::SCD(
 		transformedColumn1 = (float*)aligned_alloc(64, numMinibatchesAtATime*minibatchSize*sizeof(float));
 		transformedColumn2 = (float*)aligned_alloc(64, numMinibatchesAtATime*minibatchSize*sizeof(float));
 	}
-	else {
+	else if ( numMinibatchesAtATime > 1 ) {
 		transformedColumn2 = (float*)aligned_alloc(64, numMinibatchesAtATime*minibatchSize*sizeof(float));
 	}
 
@@ -835,7 +805,7 @@ void ColumnML::SCD(
 			cout << "x_average_time: " << end-timeStamp1 << endl;
 			cout << "Time for one epoch: " << end-start << endl;
 #endif
-			if (xHistory != NULL) {
+			if (xHistory != nullptr) {
 				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
 					xHistory[epoch_index*m_cstore->m_numFeatures + j] = xFinal[j];
 				}
@@ -852,11 +822,11 @@ void ColumnML::SCD(
 		}
 	}
 
-	if (useEncrypted == 1 && useCompressed == 1) {
+	if (useEncrypted && useCompressed) {
 		free(transformedColumn1);
 		free(transformedColumn2);
 	}
-	else if (useEncrypted == 1 || useCompressed == 1) {
+	else if (numMinibatchesAtATime > 1) {
 		free(transformedColumn2);
 	}
 	free(x);
@@ -902,13 +872,13 @@ void ColumnML::AVX_SCD(
 	cout << "Initial accuracy: " << Accuracy(type, xFinal, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 
-	float* transformedColumn1 = NULL;
-	float* transformedColumn2 = NULL;
+	float* transformedColumn1 = nullptr;
+	float* transformedColumn2 = nullptr;
 	if (useEncrypted && useCompressed) {
 		transformedColumn1 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
 		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
 	}
-	else {
+	else if (useEncrypted || useCompressed) {
 		transformedColumn2 = (float*)aligned_alloc(64, minibatchSize*sizeof(float));
 	}
 
@@ -982,7 +952,7 @@ void ColumnML::AVX_SCD(
 			cout << "x_average_time: " << end-timeStamp1 << endl;
 			cout << "Time for one epoch: " << end-start << endl;
 #endif
-			if (xHistory != NULL) {
+			if (xHistory != nullptr) {
 				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
 					xHistory[epoch_index*m_cstore->m_numFeatures + j] = xFinal[j];
 				}
@@ -1003,7 +973,7 @@ void ColumnML::AVX_SCD(
 		free(transformedColumn1);
 		free(transformedColumn2);
 	}
-	else {
+	else if (useEncrypted || useCompressed) {
 		free(transformedColumn2);
 	}
 	free(x);
@@ -1050,13 +1020,13 @@ void* batchThread(void* args) {
 
 	ColumnStore* cstore = r->m_obj->m_cstore;
 
-	float* transformedColumn1 = NULL;
-	float* transformedColumn2 = NULL;
+	float* transformedColumn1 = nullptr;
+	float* transformedColumn2 = nullptr;
 	if (r->m_useEncrypted && r->m_useCompressed) {
 		transformedColumn1 = (float*)aligned_alloc(64, r->m_minibatchSize*sizeof(float));
 		transformedColumn2 = (float*)aligned_alloc(64, r->m_minibatchSize*sizeof(float));
 	}
-	else {
+	else if (r->m_useEncrypted || r->m_useCompressed) {
 		transformedColumn2 = (float*)aligned_alloc(64, r->m_minibatchSize*sizeof(float));
 	}
 
@@ -1137,7 +1107,7 @@ void* batchThread(void* args) {
 #ifdef PRINT_TIMING
 				cout << "Time for one epoch: " << end-start << endl;
 #endif
-				if (r->m_xHistory != NULL) {
+				if (r->m_xHistory != nullptr) {
 					for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
 						r->m_xHistory[epoch*cstore->m_numFeatures + j] = r->m_xFinal[j];
 					}
@@ -1210,7 +1180,7 @@ void* batchThread(void* args) {
 #ifdef PRINT_TIMING
 					cout << "Time for one epoch: " << end-start << endl;
 #endif
-					if (r->m_xHistory != NULL) {
+					if (r->m_xHistory != nullptr) {
 						for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
 							r->m_xHistory[epoch_index*cstore->m_numFeatures + j] = r->m_xFinal[j];
 						}
@@ -1237,11 +1207,11 @@ void* batchThread(void* args) {
 		free(transformedColumn1);
 		free(transformedColumn2);
 	}
-	else {
+	else if (r->m_useEncrypted || r->m_useCompressed) {
 		free(transformedColumn2);
 	}
 
-	return NULL;
+	return nullptr;
 }
 
 double ColumnML::AVXmulti_SCD (

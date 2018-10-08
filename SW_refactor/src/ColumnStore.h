@@ -21,11 +21,18 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <sys/time.h>
 
 #include "aes.h"
-#include "../driver/iFPGA.h"
 
 using namespace std;
+
+static double get_time()
+{
+	struct timeval t;
+	gettimeofday(&t, NULL);
+	return t.tv_sec + t.tv_usec*1e-6;
+}
 
 enum NormType {ZeroToOne, MinusOneToOne};
 enum NormDirection {row, column};
@@ -106,7 +113,7 @@ public:
 
 	inline void ReturnDecompressedAndDecrypted(
 		float* transformedColumn1,
-		float* transformedColumn2,
+		float* &transformedColumn2,
 		uint32_t coordinate,
 		uint32_t* minibatchIndex,
 		uint32_t numMinibatchesAtATime,
@@ -148,14 +155,21 @@ public:
 				timeStamp2 = get_time();
 				decompressionTime += (timeStamp2-timeStamp1);
 			}
-			else {
+			else if (numMinibatchesAtATime > 1) {
 				for (uint32_t i = 0; i < minibatchSize; i++) {
 					transformedColumn2[l*minibatchSize + i] = m_samples[coordinate][minibatchIndex[l]*minibatchSize + i];
 				}
 			}
+			else {
+				transformedColumn2 = m_samples[coordinate] + minibatchIndex[l]*minibatchSize;
+			}
 		}
 	}
 
+	unsigned char m_initKey[32];
+	unsigned char* m_KEYS_enc;
+	unsigned char* m_KEYS_dec;
+	unsigned char m_ivec[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 private:
 	void reallocData() {
 		deallocData();
@@ -226,9 +240,4 @@ private:
 			free(m_encryptedSamples);
 		}
 	}
-
-	unsigned char m_initKey[32];
-	unsigned char* m_KEYS_enc;
-	unsigned char* m_KEYS_dec;
-	unsigned char m_ivec[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 };

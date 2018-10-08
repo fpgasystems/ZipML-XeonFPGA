@@ -22,10 +22,12 @@ using namespace std;
 
 #define VALUE_TO_INT_SCALER 10
 
+void SweepP(ColumnML* obj, ModelType type, uint32_t numEpochs, float lambda, AdditionalArguments args);
+void MultiCoreSCDPerformance(ColumnML* obj, ModelType type, uint32_t numEpochs, float lambda, AdditionalArguments args);
 void Convergence(ColumnML* obj, uint32_t numEpochs);
 void StepSizeSweepSGD(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args);
 void StepSizeSweepSCD(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args);
-void Performance(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args);
+void SGDvsSCDPerformance(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args);
 void PredictionSCD(
 	ColumnML* obj,
 	uint32_t numEpochs,
@@ -69,10 +71,10 @@ int main(int argc, char* argv[]) {
 	pathPreTrainedModel = argv[8];
 
 	uint32_t numMinibatchesAtATime = 1;
-	float stepSize = 128;
+	float stepSize = 4;
 	float lambda = 0.00001;
 
-	ColumnML* columnML = new ColumnML(false);
+	ColumnML* columnML = new ColumnML();
 
 	ModelType type;
 	if ( strcmp(pathToDataset, "syn") == 0) {
@@ -92,76 +94,11 @@ int main(int argc, char* argv[]) {
 	args.m_numSamples = columnML->m_cstore->m_numSamples;
 	args.m_constantStepSize = false;
 
+	// // All tests
 
-	// columnML->AVXrowwise_SGD(type, nullptr, numEpochs, 1, stepSize, lambda, &args);
+	// SweepP(columnML, type, numEpochs, lambda, args);
 
-	// columnML->SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
-
-	// columnML->AVX_SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
-
-	// columnML->SCD(type, nullptr, numEpochs, numSamples - (numSamples%8), 4, lambda, 1, 10000, false, false, VALUE_TO_INT_SCALER, &args);
-
-	// columnML->SCD(type, nullptr, numEpochs, minibatchSize, 4, lambda, 1, 1, false, false, VALUE_TO_INT_SCALER, &args);
-
-	// columnML->AVX_SCD(type, nullptr, numEpochs, numSamples - (numSamples%8), 4, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
-
-	// columnML->AVX_SCD(type, nullptr, numEpochs, minibatchSize, 4, lambda, 1, false, false, VALUE_TO_INT_SCALER, &args);
-
-	// columnML->AVXmulti_SCD(type, true, nullptr, numEpochs, minibatchSize, 4, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args, 14);
-
-	// columnML->AVXmulti_SCD(type, false, nullptr, numEpochs, minibatchSize, 4, lambda, 1, false, false, VALUE_TO_INT_SCALER, &args, 14);
-
-	// columnML->m_cstore->CompressSamples(minibatchSize, VALUE_TO_INT_SCALER);
-	// columnML->SCD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, 1, 100, false, true, VALUE_TO_INT_SCALER, &args);
-
-	// columnML->m_cstore->EncryptSamples(minibatchSize, false);
-	// columnML->SCD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, 1, 100, true, false, VALUE_TO_INT_SCALER, &args);
-
-	// columnML->m_cstore->EncryptSamples(minibatchSize, true);
-	// columnML->SCD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, 1, 100, true, true, VALUE_TO_INT_SCALER, &args);
-
-	// columnML->AVXrowwise_SGD(type, nullptr, numEpochs, 1, 0.001, lambda, &args);
-
-	// columnML->AVX_SGD(type, nullptr, numEpochs, 8, 0.01, lambda, &args);
-
-	// columnML->AVX_SGD(type, nullptr, numEpochs, 64, 0.1, lambda, &args);
-
-	// columnML->AVX_SGD(type, nullptr, numEpochs, 512, 0.1, lambda, &args);
-
-	// float* xHistory_SCD = new float[numEpochs*columnML->m_cstore->m_numFeatures];
-	// columnML->AVXmulti_SCD(type, true, xHistory_SCD, numEpochs, minibatchSize, 10, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args, 14);
-
-	// float* xHistory_SGD = new float[numEpochs*columnML->m_cstore->m_numFeatures];
-	// columnML->AVX_SGD(type, xHistory_SGD, numEpochs, 64, 0.1, lambda, &args);
-
-
-	// args.m_firstSample = columnML->m_cstore->m_numSamples * 0.7;
-	// args.m_numSamples = columnML->m_cstore->m_numSamples - args.m_firstSample;
-
-	// cout << "SCD validation loss: " << endl;
-	// for (uint32_t e = 0; e < numEpochs; e++) {
-	// 	cout << columnML->Loss(type, xHistory_SCD + e*columnML->m_cstore->m_numFeatures, lambda, &args) << endl;
-	// }
-
-	// cout << "SGD validation loss: " << endl;
-	// for (uint32_t e = 0; e < numEpochs; e++) {
-	// 	cout << columnML->Loss(type, xHistory_SGD + e*columnML->m_cstore->m_numFeatures, lambda, &args) << endl;
-	// }
-
-
-	// float* x = new float[columnML->m_cstore->m_numFeatures];
-	// memset(x, 0, columnML->m_cstore->m_numFeatures*sizeof(float));
-
-	// float loss = columnML->LogregLoss(x, lambda, &args);
-	// cout << "initial loss: " << loss << endl;
-
-	// columnML->LoadModel(pathPreTrainedModel, x, columnML->m_cstore->m_numFeatures);
-
-	// float loss = columnML->LogregLoss(x, lambda, &args);
-	// cout << "loss: " << loss << endl;
-
-
-	// All tests
+	// MultiCoreSCDPerformance(columnML, type, numEpochs, lambda, args);
 
 	// Convergence(columnML, numEpochs);
 
@@ -169,7 +106,7 @@ int main(int argc, char* argv[]) {
 
 	// StepSizeSweepSCD(columnML, type, numEpochs, numSamples, lambda, args);
 
-	// Performance(columnML, type, numEpochs, numSamples, lambda, args);
+	// SGDvsSCDPerformance(columnML, type, numEpochs, numSamples, lambda, args);
 	
 	// PredictionSCD(
 	// 	columnML,
@@ -198,6 +135,37 @@ int main(int argc, char* argv[]) {
 	delete columnML;
 
 	return 0;
+}
+
+void SweepP(ColumnML* obj, ModelType type, uint32_t numEpochs, float lambda, AdditionalArguments args) {
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 1, false, false, VALUE_TO_INT_SCALER, &args, 14);
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 2, false, false, VALUE_TO_INT_SCALER, &args, 14);
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 4, false, false, VALUE_TO_INT_SCALER, &args, 14);
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 8, false, false, VALUE_TO_INT_SCALER, &args, 14);
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 16, false, false, VALUE_TO_INT_SCALER, &args, 14);
+
+	obj->m_cstore->CompressSamples(16384, VALUE_TO_INT_SCALER);
+	obj->m_cstore->EncryptSamples(16384, true);
+
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 1, true, true, VALUE_TO_INT_SCALER, &args, 14);
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 2, true, true, VALUE_TO_INT_SCALER, &args, 14);
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 4, true, true, VALUE_TO_INT_SCALER, &args, 14);
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 8, true, true, VALUE_TO_INT_SCALER, &args, 14);
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 16, true, true, VALUE_TO_INT_SCALER, &args, 14);
+}
+
+void MultiCoreSCDPerformance(ColumnML* obj, ModelType type, uint32_t numEpochs, float lambda, AdditionalArguments args) {
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 10, false, false, VALUE_TO_INT_SCALER, &args, 1);
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 10, false, false, VALUE_TO_INT_SCALER, &args, 2);
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 10, false, false, VALUE_TO_INT_SCALER, &args, 4);
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 10, false, false, VALUE_TO_INT_SCALER, &args, 8);
+	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 10, false, false, VALUE_TO_INT_SCALER, &args, 14);
+
+	obj->AVXmulti_SCD(type, true, nullptr, numEpochs, 16384, 4, lambda, 10, false, false, VALUE_TO_INT_SCALER, &args, 1);
+	obj->AVXmulti_SCD(type, true, nullptr, numEpochs, 16384, 4, lambda, 10, false, false, VALUE_TO_INT_SCALER, &args, 2);
+	obj->AVXmulti_SCD(type, true, nullptr, numEpochs, 16384, 4, lambda, 10, false, false, VALUE_TO_INT_SCALER, &args, 4);
+	obj->AVXmulti_SCD(type, true, nullptr, numEpochs, 16384, 4, lambda, 10, false, false, VALUE_TO_INT_SCALER, &args, 8);
+	obj->AVXmulti_SCD(type, true, nullptr, numEpochs, 16384, 4, lambda, 10, false, false, VALUE_TO_INT_SCALER, &args, 14);
 }
 
 void Convergence(ColumnML* obj, uint32_t numEpochs) {
@@ -242,7 +210,7 @@ void StepSizeSweepSCD(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_
 	}
 }
 
-void Performance(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args) {
+void SGDvsSCDPerformance(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args) {
 
 	obj->AVXrowwise_SGD(type, nullptr, numEpochs, 1, 0.001, lambda, &args);
 

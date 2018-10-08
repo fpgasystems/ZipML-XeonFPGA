@@ -17,12 +17,13 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #include <iostream>
 #include <cmath>
 #include <pthread.h>
 
 #include "ColumnStore.h"
-#include "../driver/iFPGA.h"
 
 #ifdef AVX2
 #include "immintrin.h"
@@ -31,14 +32,13 @@
 
 using namespace std;
 
-// #define PRINT_TIMING
-// #define PRINT_LOSS
+#define PRINT_TIMING
+#define PRINT_LOSS
 // #define PRINT_ACCURACY
 // #define SGD_SHUFFLE
 // #define SCD_SHUFFLE
 
 #define MAX_NUM_THREADS 14
-#define NUM_FINSTANCES 4
 
 enum ModelType {l2svm, logreg, linreg};
 
@@ -58,39 +58,19 @@ struct AdditionalArguments
 	float m_falseLabel;
 
 	bool m_constantStepSize;
-	
 };
 
 class ColumnML {
 public:
 	ColumnStore* m_cstore;
 
-	ColumnML(bool getFPGA) {
+	ColumnML() {
 		m_cstore = new ColumnStore();
-
-		m_pageSizeInCacheLines = 65536; // 65536 x 64B = 4 MB
-		m_pagesToAllocate = 1024;
-		m_numValuesPerLine = 16;
-
-		m_gotFPGA = false;
-		if (getFPGA) {
-			m_interfaceFPGA = new iFPGA(&m_runtimeClient, m_pagesToAllocate, m_pageSizeInCacheLines, 0);
-			if(!m_runtimeClient.isOK()){
-				cout << "FPGA runtime failed to start" << endl;
-				exit(1);
-			}
-			m_gotFPGA = true;
-		}	
 	}
 
 	~ColumnML() {
 		delete m_cstore;
-		if (m_gotFPGA) {
-			delete m_interfaceFPGA;
-		}
 	}
-
-	void printTimeout();
 
 	void WriteLogregPredictions(char* fileName, float* x);
 	void LoadModel(char* fileName, float* x, uint32_t numFeatures) {
@@ -294,16 +274,4 @@ private:
 				break;
 		}
 	}
-
-	uint32_t m_pageSizeInCacheLines;
-	uint32_t m_pagesToAllocate;
-	uint32_t m_numValuesPerLine;
-
-	bool m_gotFPGA;
-	RuntimeClient m_runtimeClient;
-	iFPGA* m_interfaceFPGA;
-	uint32_t m_samplesAddress[NUM_FINSTANCES];
-	uint32_t m_labelsAddress[NUM_FINSTANCES];
-	uint32_t m_residualAddress[NUM_FINSTANCES];
-	uint32_t m_stepAddress[NUM_FINSTANCES];
 };

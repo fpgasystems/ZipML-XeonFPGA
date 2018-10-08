@@ -88,13 +88,6 @@
 	#define CSR_MY_CONFIG7				0x0248
 #endif
 
-static double get_time()
-{
-	struct timeval t;
-	gettimeofday(&t, NULL);
-	return t.tv_sec + t.tv_usec*1e-6;
-}
-
 static uint64_t ipow(uint64_t base, uint64_t exponent)
 {
 	uint64_t result = 1;
