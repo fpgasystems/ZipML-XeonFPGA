@@ -30,7 +30,7 @@ uint32_t FPGA_ColumnML::FPGA_PrintMemory() {
 }
 
 
-uint32_t FPGA_ColumnML::FPGA_CopyDataIntoMemory(
+void FPGA_ColumnML::FPGA_CopyDataIntoMemory(
 	uint32_t numMinibatches, 
 	uint32_t minibatchSize, 
 	uint32_t numMinibatchesToAssign[],
@@ -104,11 +104,9 @@ uint32_t FPGA_ColumnML::FPGA_CopyDataIntoMemory(
 		m_stepAddress[n] = address32/m_numValuesPerLine;
 		address32 += numEpochs*numMinibatchesToAssign[n]*(m_cstore->m_numFeatures/m_numValuesPerLine + (m_cstore->m_numFeatures%m_numValuesPerLine > 0))*m_numValuesPerLine;
 	}
-
-	return m_stepAddress[0]*m_numValuesPerLine;
 }
 
-uint32_t FPGA_ColumnML::FPGA_CopyCompressedDataIntoMemory(
+void FPGA_ColumnML::FPGA_CopyCompressedDataIntoMemory(
 	uint32_t numMinibatches,
 	uint32_t minibatchSize,
 	uint32_t numMinibatchesToAssign[],
@@ -203,14 +201,12 @@ uint32_t FPGA_ColumnML::FPGA_CopyCompressedDataIntoMemory(
 	// Step addresses
 	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
 		m_stepAddress[n] = address32/m_numValuesPerLine;
-		address32 += numEpochs*numMinibatchesToAssign[n]*(m_cstore->m_numFeatures/m_numValuesPerLine + (m_cstore->m_numFeatures%m_numValuesPerLine > 0))*m_numValuesPerLine;
+		address32 += numMinibatchesToAssign[n]*(m_cstore->m_numFeatures/m_numValuesPerLine + (m_cstore->m_numFeatures%m_numValuesPerLine > 0))*m_numValuesPerLine;
 	}
-
-	return m_stepAddress[0]*m_numValuesPerLine;	
 }
 
 
-double FPGA_ColumnML::FPGA_SCD(
+void FPGA_ColumnML::FPGA_SCD(
 	ModelType type,
 	bool doRealSCD,
 	float* xHistory,
@@ -259,31 +255,32 @@ double FPGA_ColumnML::FPGA_SCD(
 		numMinibatchesAssigned += numMinibatchesToAssign[n];
 	}
 
-	uint32_t address32 = 0;
 	if (useCompressed) {
-		address32 = FPGA_CopyCompressedDataIntoMemory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs, useEncrypted);
+		FPGA_CopyCompressedDataIntoMemory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs, useEncrypted);
 	}
 	else {
-		address32 = FPGA_CopyDataIntoMemory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs, useEncrypted);
+		FPGA_CopyDataIntoMemory(numMinibatches, minibatchSize, numMinibatchesToAssign, numEpochs, useEncrypted);
 	}
 
-	float* xHistoryLocal = (float*)aligned_alloc(64, numEpochs*m_cstore->m_numFeatures*sizeof(float));
-	memset(xHistoryLocal, 0, numEpochs*m_cstore->m_numFeatures*sizeof(float));
-	float* x = (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
-	memset(x, 0, m_cstore->m_numFeatures*sizeof(float));
+	float* x = (float*)aligned_alloc(64, numMinibatches*m_cstore->m_numFeatures*sizeof(float));
+	memset(x, 0, numMinibatches*m_cstore->m_numFeatures*sizeof(float));
+	float* xFinal = (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
+	memset(xFinal, 0, m_cstore->m_numFeatures*sizeof(float));
 	
 #ifdef PRINT_LOSS
 	cout << "Initial loss: " << Loss(type, x, lambda, args) << endl;
 #endif
 
-	float tempStepSize;
+	float scaledStepSize;
+	float scaledLambda = stepSize*lambda;
 	if (doRealSCD ){
-		tempStepSize = stepSize/(float)args->m_numSamples;
+		scaledStepSize = stepSize/(float)args->m_numSamples;
 	}
 	else {
-		tempStepSize = stepSize/(float)minibatchSize;
+		scaledStepSize = stepSize/(float)minibatchSize;
 	}
-	uint32_t* tempStepSizeAddr = (uint32_t*) &tempStepSize;
+	uint32_t* scaledStepSizeAddr = (uint32_t*) &scaledStepSize;
+	uint32_t* scaledLambdaAddr = (uint32_t*) &scaledLambda;
 
 	uint64_t config[NUM_FINSTANCES][5];
 	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
@@ -301,10 +298,10 @@ double FPGA_ColumnML::FPGA_SCD(
 		config[n][2] = ((uint64_t)(minibatchSize/m_numValuesPerLine) << 48) | ((uint64_t)numMinibatchesToAssign[n] << 32) | ((uint64_t)m_cstore->m_numFeatures);
 		
 		config[n][3] = 0;
-		config[n][3] = ((uint64_t)numEpochs << 32) | ((uint64_t)*tempStepSizeAddr);
+		config[n][3] = ((uint64_t)numEpochs << 32) | ((uint64_t)*scaledStepSizeAddr);
 
 		config[n][4] = 0;
-		config[n][4] = ((uint64_t)doRealSCD << 25) | ((uint64_t)15 << 20) | ((uint64_t)useEncrypted << 19) | ((uint64_t)enableMultiLine << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;	
+		config[n][4] = (((uint64_t)*scaledLambdaAddr) << 32) | ((uint64_t)doRealSCD << 25) | ((uint64_t)15 << 20) | ((uint64_t)useEncrypted << 19) | ((uint64_t)enableMultiLine << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;	
 	}
 	if (useEncrypted) {
 		uint64_t temp = 0;
@@ -323,149 +320,231 @@ double FPGA_ColumnML::FPGA_SCD(
 
 	uint32_t index[NUM_FINSTANCES];
 	
-	double start = get_time();
+	uint32_t epoch_index = 0;
+	for(uint32_t epoch = 0; epoch < numEpochs + (numEpochs/residualUpdatePeriod); epoch++) {
+		double start = get_time();
 
-	uint32_t epoch = 0;
-	if (numEpochs/residualUpdatePeriod > 0) {
-		for (epoch = 0; epoch+residualUpdatePeriod < numEpochs; epoch += residualUpdatePeriod) {
+		if ( (epoch+1)%(residualUpdatePeriod+1) == 0 ) {
+			//Do residual update
+			for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+				m_interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
+				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, config[n][0]);
+				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, config[n][1]);
+				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, config[n][2]);
+				uint64_t temp1 = ((uint64_t)1 << 32) | (config[n][3] & 0xFFFFFFFF);
+				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp1);
+				uint64_t temp2 = ((uint64_t)1 << 24) | config[n][4];
+				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp2);
+			}
+			m_interfaceFPGA->startTransaction();
+			m_interfaceFPGA->joinTransaction();
+		}
+		else{
 			// Do normal epochs
 			for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
 				m_interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
 				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, config[n][0]);
 				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, config[n][1]);
 				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, config[n][2]);
-				uint64_t temp1 = ((uint64_t)residualUpdatePeriod << 32) | (config[n][3] & 0xFFFFFFFF);
+				uint64_t temp1 = ((uint64_t)1 << 32) | (config[n][3] & 0xFFFFFFFF);
 				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp1);
 				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, config[n][4]);
 			}
 
 			m_interfaceFPGA->startTransaction();
 			m_interfaceFPGA->joinTransaction();
+		}
 
+		if ( (epoch+1)%(residualUpdatePeriod+1) == 0 ) {
+#ifdef PRINT_TIMING
+			double end = get_time();
+			cout << "--> PERFORMED RESIDUAL UPDATE !!!" << endl;
+			cout << "Time for one epoch: " << end-start << endl;
+#endif
+		}
+		else {
 			memset(index, 0, NUM_FINSTANCES*sizeof(uint32_t));
-			for (uint32_t e = 0; e < residualUpdatePeriod; e++) {
-				for (uint32_t n = 0; n < numInstancesToUse; n++) {
-					for (uint32_t m = 0; m < numMinibatchesToAssign[n]; m++) {
-						for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
-							float value = m_interfaceFPGA->readFromMemoryFloat('i', m_stepAddress[n]*m_numValuesPerLine+index[n]);
-							m_interfaceFPGA->writeToMemoryFloat('i', 0, m_stepAddress[n]*m_numValuesPerLine+index[n]);
-							x[j] -= value;
-							index[n]++;
-						}
-						if (index[n]%m_numValuesPerLine > 0) {
-							index[n] += (m_numValuesPerLine - index[n]%m_numValuesPerLine);
-						}
-					}
-				}
-				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
-					xHistoryLocal[(epoch+e)*m_cstore->m_numFeatures+j] = x[j]/numMinibatches;
-				}
-			}
-
+			uint32_t minibatchCount = 0;
 			for (uint32_t n = 0; n < numInstancesToUse; n++) {
-				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
-					m_interfaceFPGA->writeToMemoryFloat('i', x[j]/numMinibatches, m_stepAddress[n]*m_numValuesPerLine+j);
-				}
-			}
-
-			// Do residual update
-			if (epoch + residualUpdatePeriod < numEpochs) {
-				for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
-					m_interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
-					m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, config[n][0]);
-					m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, config[n][1]);
-					m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, config[n][2]);
-					uint64_t temp1 = ((uint64_t)1 << 32) | (config[n][3] & 0xFFFFFFFF);
-					m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp1);
-					uint64_t temp2 = ((uint64_t)1 << 24) | config[n][4];
-					m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp2);
-				}
-				m_interfaceFPGA->startTransaction();
-				m_interfaceFPGA->joinTransaction();
-			}
-		}
-	}
-	cout << "epoch: " << epoch << endl;
-
-	if (epoch < numEpochs) {
-		for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
-			m_interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
-			m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, config[n][0]);
-			m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, config[n][1]);
-			m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, config[n][2]);
-			uint64_t temp = ((uint64_t)(numEpochs - epoch) << 32) | (config[n][3] & 0xFFFFFFFF);
-			m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp);
-			m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, config[n][4]);
-		}
-		m_interfaceFPGA->startTransaction();
-		m_interfaceFPGA->joinTransaction();
-	}
-
-	double end = get_time();
-	cout << "Time for all epochs on the FPGA: " << end-start << endl;
-	cout << "Time for one epoch on the FPGA: " << (end-start)/numEpochs << endl;
-	double epoch_time = (end-start)/numEpochs;
-
-	memset(index, 0, NUM_FINSTANCES*sizeof(uint32_t));
-	if (doRealSCD == false) {
-		if (epoch < numEpochs) {
-			for (uint32_t e = epoch; e < numEpochs; e++) {
-				for (uint32_t n = 0; n < numInstancesToUse; n++) {
-					for (uint32_t m = 0; m < numMinibatchesToAssign[n]; m++) {
-						for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
-							float value = m_interfaceFPGA->readFromMemoryFloat('i', m_stepAddress[n]*m_numValuesPerLine+index[n]);
-							x[j] -= value;
-							index[n]++;
-						}
-						if (index[n]%m_numValuesPerLine > 0) {
-							index[n] += (m_numValuesPerLine - index[n]%m_numValuesPerLine);
-						}
+				for (uint32_t m = 0; m < numMinibatchesToAssign[n]; m++) {
+					for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+						float step = m_interfaceFPGA->readFromMemoryFloat('i', m_stepAddress[n]*m_numValuesPerLine+index[n]);
+						x[minibatchCount*m_cstore->m_numFeatures + j] -= step;
+						m_interfaceFPGA->writeToMemoryFloat('i', x[minibatchCount*m_cstore->m_numFeatures + j], m_stepAddress[n]*m_numValuesPerLine+index[n]);
+						index[n]++;
+					}
+					minibatchCount++;
+					if (index[n]%m_numValuesPerLine > 0) {
+						index[n] += (m_numValuesPerLine - index[n]%m_numValuesPerLine);
 					}
 				}
-				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
-					xHistoryLocal[e*m_cstore->m_numFeatures + j] = x[j]/numMinibatches;
-				}
 			}
-		}
-		for(uint32_t e = 0; e < numEpochs; e++) {
-			float* xEnd = xHistoryLocal + e*m_cstore->m_numFeatures;
-			if (xHistory != nullptr) {
-				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
-					xHistory[e*m_cstore->m_numFeatures + j] = xEnd[j];
-				}
-			}
-			else {
-#ifdef PRINT_LOSS
-				cout << Loss(type, xEnd, lambda, args) << endl;
+			GetAveragedX(numMinibatches, 1, m_cstore, xFinal, x);
+#ifdef PRINT_TIMING
+			double end = get_time();
+			cout << "Time for one epoch: " << end-start << endl;
 #endif
-			}
-		}
-	}
-	else {
-		uint32_t n = 0;
-		for (uint32_t e = epoch; e < numEpochs; e++) {
-			for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
-				float value = m_interfaceFPGA->readFromMemoryFloat('i', m_stepAddress[n]*m_numValuesPerLine+index[n]);
-				x[j] -= value;
-				index[n]++;
-			}
-			if (index[n]%m_numValuesPerLine > 0) {
-				index[n] += (m_numValuesPerLine - index[n]%m_numValuesPerLine);
-			}
 			if (xHistory != nullptr) {
 				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
-					xHistory[e*m_cstore->m_numFeatures + j] = x[j];
+					xHistory[epoch_index*m_cstore->m_numFeatures + j] = xFinal[j];
 				}
+				epoch_index++;
 			}
 			else {
 #ifdef PRINT_LOSS
-				cout << Loss(type, x, lambda, args) << endl;
+				cout << Loss(type, xFinal, lambda, args) << endl;
+#endif
+#ifdef PRINT_ACCURACY
+				cout << Accuracy(type, xFinal, args) << " corrects out of " << args->m_numSamples << endl;
 #endif
 			}
 		}
 	}
 
-	free(xHistoryLocal);
+	free(x);
+	free(xFinal);
 
-	return epoch_time;
+	// uint32_t epoch = 0;
+	// if (numEpochs/residualUpdatePeriod > 0) {
+	// 	for (epoch = 0; epoch+residualUpdatePeriod < numEpochs; epoch += residualUpdatePeriod) {
+	// 		// Do normal epochs
+	// 		for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+	// 			m_interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
+	// 			m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, config[n][0]);
+	// 			m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, config[n][1]);
+	// 			m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, config[n][2]);
+	// 			uint64_t temp1 = ((uint64_t)residualUpdatePeriod << 32) | (config[n][3] & 0xFFFFFFFF);
+	// 			m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp1);
+	// 			m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, config[n][4]);
+	// 		}
+
+	// 		m_interfaceFPGA->startTransaction();
+	// 		m_interfaceFPGA->joinTransaction();
+
+	// 		for (uint32_t e = 0; e < residualUpdatePeriod; e++) {
+	// 			memset(index, 0, NUM_FINSTANCES*sizeof(uint32_t));
+	// 			for (uint32_t n = 0; n < numInstancesToUse; n++) {
+	// 				for (uint32_t m = 0; m < numMinibatchesToAssign[n]; m++) {
+	// 					for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+	// 						float value = m_interfaceFPGA->readFromMemoryFloat('i', m_stepAddress[n]*m_numValuesPerLine+index[n]);
+	// 						m_interfaceFPGA->writeToMemoryFloat('i', 0, m_stepAddress[n]*m_numValuesPerLine+index[n]);
+	// 						x[j] -= value;
+	// 						index[n]++;
+	// 					}
+	// 					if (index[n]%m_numValuesPerLine > 0) {
+	// 						index[n] += (m_numValuesPerLine - index[n]%m_numValuesPerLine);
+	// 					}
+	// 				}
+	// 			}
+	// 			for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+	// 				xHistoryLocal[(epoch+e)*m_cstore->m_numFeatures+j] = x[j]/numMinibatches;
+	// 			}
+	// 		}
+
+	// 		for (uint32_t n = 0; n < numInstancesToUse; n++) {
+	// 			for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+	// 				m_interfaceFPGA->writeToMemoryFloat('i', x[j]/numMinibatches, m_stepAddress[n]*m_numValuesPerLine+j);
+	// 			}
+	// 		}
+
+	// 		// Do residual update
+	// 		if (epoch + residualUpdatePeriod < numEpochs) {
+	// 			for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+	// 				m_interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
+	// 				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, config[n][0]);
+	// 				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, config[n][1]);
+	// 				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, config[n][2]);
+	// 				uint64_t temp1 = ((uint64_t)1 << 32) | (config[n][3] & 0xFFFFFFFF);
+	// 				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp1);
+	// 				uint64_t temp2 = ((uint64_t)1 << 24) | config[n][4];
+	// 				m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, temp2);
+	// 			}
+	// 			m_interfaceFPGA->startTransaction();
+	// 			m_interfaceFPGA->joinTransaction();
+	// 		}
+	// 	}
+	// }
+	// cout << "epoch: " << epoch << endl;
+
+	// if (epoch < numEpochs) {
+	// 	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
+	// 		m_interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
+	// 		m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG1, config[n][0]);
+	// 		m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG2, config[n][1]);
+	// 		m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG3, config[n][2]);
+	// 		uint64_t temp = ((uint64_t)(numEpochs - epoch) << 32) | (config[n][3] & 0xFFFFFFFF);
+	// 		m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG4, temp);
+	// 		m_interfaceFPGA->m_pALIMMIOService->mmioWrite64(CSR_MY_CONFIG5, config[n][4]);
+	// 	}
+	// 	m_interfaceFPGA->startTransaction();
+	// 	m_interfaceFPGA->joinTransaction();
+	// }
+
+	// double end = get_time();
+	// cout << "Time for all epochs on the FPGA: " << end-start << endl;
+	// cout << "Time for one epoch on the FPGA: " << (end-start)/numEpochs << endl;
+	// double epoch_time = (end-start)/numEpochs;
+
+// 	memset(index, 0, NUM_FINSTANCES*sizeof(uint32_t));
+// 	if (doRealSCD == false) {
+// 		if (epoch < numEpochs) {
+// 			for (uint32_t e = epoch; e < numEpochs; e++) {
+// 				for (uint32_t n = 0; n < numInstancesToUse; n++) {
+// 					for (uint32_t m = 0; m < numMinibatchesToAssign[n]; m++) {
+// 						for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+// 							float value = m_interfaceFPGA->readFromMemoryFloat('i', m_stepAddress[n]*m_numValuesPerLine+index[n]);
+// 							x[j] -= value;
+// 							index[n]++;
+// 						}
+// 						if (index[n]%m_numValuesPerLine > 0) {
+// 							index[n] += (m_numValuesPerLine - index[n]%m_numValuesPerLine);
+// 						}
+// 					}
+// 				}
+// 				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+// 					xHistoryLocal[e*m_cstore->m_numFeatures + j] = x[j]/numMinibatches;
+// 				}
+// 			}
+// 		}
+// 		for(uint32_t e = 0; e < numEpochs; e++) {
+// 			float* xEnd = xHistoryLocal + e*m_cstore->m_numFeatures;
+// 			if (xHistory != nullptr) {
+// 				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+// 					xHistory[e*m_cstore->m_numFeatures + j] = xEnd[j];
+// 				}
+// 			}
+// 			else {
+// #ifdef PRINT_LOSS
+// 				cout << Loss(type, xEnd, lambda, args) << endl;
+// #endif
+// 			}
+// 		}
+// 	}
+// 	else {
+// 		uint32_t n = 0;
+// 		for (uint32_t e = epoch; e < numEpochs; e++) {
+// 			for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+// 				float value = m_interfaceFPGA->readFromMemoryFloat('i', m_stepAddress[n]*m_numValuesPerLine+index[n]);
+// 				x[j] -= value;
+// 				index[n]++;
+// 			}
+// 			if (index[n]%m_numValuesPerLine > 0) {
+// 				index[n] += (m_numValuesPerLine - index[n]%m_numValuesPerLine);
+// 			}
+// 			if (xHistory != nullptr) {
+// 				for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+// 					xHistory[e*m_cstore->m_numFeatures + j] = x[j];
+// 				}
+// 			}
+// 			else {
+// #ifdef PRINT_LOSS
+// 				cout << Loss(type, x, lambda, args) << endl;
+// #endif
+// 			}
+// 		}
+// 	}
+
+// 	free(xHistoryLocal);
+
+	// return epoch_time;
 }

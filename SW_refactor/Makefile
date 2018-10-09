@@ -15,20 +15,21 @@
 #*************************************************************************
 
 CXX			= g++
-CPPFLAGS	= -O3 -std=c++11 -march=native -Wall -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-reorder -Wno-narrowing -DAVX2
+CPPFLAGS	= -O3 -std=c++11 -march=native -Wall -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Wno-reorder -Wno-narrowing #-DAVX2
 LDFLAGS		= -lOSAL -lAAS
-FPGA_COMMON = ./driver/iFPGA.cpp ./driver/RuntimeClient.h ./driver/RuntimeClient.cpp ./src/FPGA_ColumnML.cpp
+FPGA_COMMON = ./driver/iFPGA.cpp  ./driver/RuntimeClient.cpp ./src/FPGA_ColumnML.cpp 
 COMMON		= ./src/ColumnML.cpp ./src/ColumnStore.cpp 
 
 .PHONY: all clean distclean
 
 all: cpu_tests fpga_tests
 
-cpu_tests: ./tests/cpu_tests.cpp $(COMMON)
+cpu_tests: ./tests/cpu_tests.cpp $(COMMON)./src/ColumnML.h ./src/ColumnStore.h
 	$(CXX) -D HARPv2 $(CPPFLAGS) ./tests/cpu_tests.cpp $(COMMON) -o cpu_tests -lpthread
 
-fpga_tests: ./tests/fpga_tests.cpp $(COMMON) $(FPGA_COMMON)
+fpga_tests: ./tests/fpga_tests.cpp $(COMMON) $(FPGA_COMMON) ./driver/iFPGA.h ./driver/RuntimeClient.h ./src/ColumnML.h ./src/ColumnStore.h ./src/FPGA_ColumnML.h 
 	$(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/fpga_tests.cpp $(COMMON) $(FPGA_COMMON) -o fpga_tests -L$(AALSDK)/lib -lpthread $(LDFLAGS) -laalrt
 
 clean:
 	rm cpu_tests
+	rm fpga_tests

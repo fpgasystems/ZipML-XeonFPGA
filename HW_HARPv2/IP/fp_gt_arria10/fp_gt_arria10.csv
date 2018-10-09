@@ -1,0 +1,20 @@
+# system info fp_gt_arria10 on 2018.10.09.13:21:44
+system_info:
+name,value
+DEVICE,10AS016C3U19E2LG
+DEVICE_FAMILY,Arria 10
+GENERATION_ID,1539084104
+#
+#
+# Files generated for fp_gt_arria10 on 2018.10.09.13:21:44
+files:
+filepath,kind,attributes,module,is_top
+sim/fp_gt_arria10.v,VERILOG,CONTAINS_INLINE_CONFIGURATION,fp_gt_arria10,true
+altera_fp_functions_160/sim/dspba_library_package.vhd,VHDL,,fp_gt_arria10_altera_fp_functions_160_jgnu7ly,false
+altera_fp_functions_160/sim/dspba_library.vhd,VHDL,,fp_gt_arria10_altera_fp_functions_160_jgnu7ly,false
+altera_fp_functions_160/sim/fp_gt_arria10_altera_fp_functions_160_jgnu7ly.vhd,VHDL,,fp_gt_arria10_altera_fp_functions_160_jgnu7ly,false
+#
+# Map from instance-path to kind of module
+instances:
+instancePath,module
+fp_gt_arria10.fp_functions_0,fp_gt_arria10_altera_fp_functions_160_jgnu7ly

@@ -137,6 +137,7 @@ int main(int argc, char* argv[]) {
 	return 0;
 }
 
+#ifdef AVX2
 void SweepP(ColumnML* obj, ModelType type, uint32_t numEpochs, float lambda, AdditionalArguments args) {
 	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 1, false, false, VALUE_TO_INT_SCALER, &args, 14);
 	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 2, false, false, VALUE_TO_INT_SCALER, &args, 14);
@@ -302,3 +303,4 @@ void PredictionSCD(
 		cout << pSCD10_corrects << " corrects out of " << args.m_numSamples << ". " << (float)pSCD10_corrects/(float)args.m_numSamples << "%" << endl;
 	}
 }
+#endif

@@ -64,6 +64,7 @@ port(
 	number_of_batches : in std_logic_vector(15 downto 0);
 	batch_size : in std_logic_vector(15 downto 0);
 	step_size : in std_logic_vector(31 downto 0);
+	lambda : in std_logic_vector(31 downto 0);
 	number_of_epochs : in std_logic_vector(15 downto 0));
 end floatFSCD;
 
@@ -95,6 +96,7 @@ signal b_NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
 signal a_NumberOfReceivedReads : unsigned(31 downto 0) := (others => '0');
 signal residual_NumberOfWriteRequests : unsigned(31 downto 0) := (others => '0');
 signal step_NumberOfWriteRequests : unsigned(31 downto 0) := (others => '0');
+signal step_NumberOfWriteRequestsPerEpoch : unsigned(31 downto 0) := (others => '0');
 signal NumberOfWriteRequests : unsigned(31 downto 0) := (others => '0');
 signal NumberOfPendingWrites : unsigned(31 downto 0) := (others => '0');
 signal NumberOfWriteResponses : unsigned(31 downto 0) := (others => '0');
@@ -176,6 +178,16 @@ signal a_fifo_dout : std_logic_vector(511 downto 0);
 signal a_fifo_count : std_logic_vector(LOG2_MAX_iBATCHSIZE downto 0);
 signal a_fifo_almostfull: std_logic;
 
+signal a1_fifo_we : std_logic;
+signal a1_fifo_din : std_logic_vector(511 downto 0);
+signal a1_fifo_re : std_logic;
+signal a1_fifo_valid : std_logic;
+signal a1_fifo_dout : std_logic_vector(511 downto 0);
+signal a1_fifo_count : std_logic_vector(LOG2_MAX_iBATCHSIZE downto 0);
+signal a1_fifo_almostfull: std_logic;
+
+signal model_for_lambda : std_logic_vector(31 downto 0);
+
 signal scalar_vector_mult_valid : std_logic;
 signal scalar_vector_mult_scalar : std_logic_vector(31 downto 0);
 signal scalar_vector_mult_vector : std_logic_vector(511 downto 0);
@@ -192,6 +204,7 @@ signal dot_valid : std_logic;
 signal dot : std_logic_vector(31 downto 0);
 signal step : std_logic_vector(31 downto 0);
 signal step_valid : std_logic;
+signal step_valid_once : std_logic;
 
 signal delta_almost_valid : std_logic;
 signal delta_valid : std_logic;
@@ -341,14 +354,30 @@ port (
 	result : out std_logic_vector(31 downto 0));
 end component;
 
-component fp_mult_arria10
-	port (
-		a      : in  std_logic_vector(31 downto 0) := (others => '0'); --      a.a
-		areset : in  std_logic                     := '0';             -- areset.reset
-		b      : in  std_logic_vector(31 downto 0) := (others => '0'); --      b.b
-		clk    : in  std_logic                     := '0';             --    clk.clk
-		q      : out std_logic_vector(31 downto 0)                     --      q.q
-	);
+
+--component fp_mult_arria10
+--	port (
+--		a      : in  std_logic_vector(31 downto 0) := (others => '0'); --      a.a
+--		areset : in  std_logic                     := '0';             -- areset.reset
+--		b      : in  std_logic_vector(31 downto 0) := (others => '0'); --      b.b
+--		clk    : in  std_logic                     := '0';             --    clk.clk
+--		q      : out std_logic_vector(31 downto 0)                     --      q.q
+--	);
+--end component;
+
+component stepsize_and_regularization
+generic (VALUES_PER_LINE : integer := 16);
+port (
+	clk : in std_logic;
+	reset : in std_logic;
+	trigger : in std_logic;
+	dot : in std_logic_vector(31 downto 0);
+	model : in std_logic_vector(31 downto 0);
+	stepsize : in std_logic_vector(31 downto 0);
+	lambda : in std_logic_vector(31 downto 0);
+	result_valid_once : out std_logic;
+	result_valid : out std_logic;
+	result : out std_logic_vector(31 downto 0));
 end component;
 
 
@@ -489,7 +518,27 @@ port map (
 	we => model_store_we,
 	q => model_store_dout);
 
-a_fifo_re <= dot_valid;
+a1_fifo_re <= residual_minus_b_valid;
+a1_fifo: normal2axis_fifo
+generic map (
+	FIFO_WIDTH => 512,
+	LOG2_FIFO_DEPTH => LOG2_MAX_iBATCHSIZE+1)
+port map (
+	clk => clk,
+	resetn => resetn_internal,
+
+	write_enable => a1_fifo_we,
+	write_data => a1_fifo_din,
+
+	m_axis_tready => a1_fifo_re,
+	m_axis_tvalid => a1_fifo_valid,
+	m_axis_tdata => a1_fifo_dout,
+
+	almostfull => a1_fifo_almostfull,
+	count => a1_fifo_count);
+
+--a_fifo_re <= dot_valid;
+a_fifo_re <= step_valid;
 a_fifo: normal2axis_fifo
 generic map (
 	FIFO_WIDTH => 512,
@@ -532,19 +581,34 @@ port map (
 	trigger => residual_minus_b_valid,
 	accumulation_count => dot_product_accumulation_count,
 	vector1 => residual_minus_b,
-	vector2 => input_vector(INPUT_VECTOR_DELAY_CYCLES),
+	vector2 => a1_fifo_dout, --input_vector(INPUT_VECTOR_DELAY_CYCLES),
 	valid_allowed => dot_valid_allowed,
 	result_almost_valid => dot_almost_valid,
 	result_valid => dot_valid,
 	result => dot);
 
-COMP_step_size_mult: fp_mult_arria10
+--COMP_step_size_mult: fp_mult_arria10
+--port map (
+--	a => dot,
+--	areset => reset,
+--	b => step_size,
+--	clk => clk,
+--	q => step);
+
+model_for_lambda <= model_store_dout( 32*i_model_mux_1d + 31 downto 32*i_model_mux_1d );
+COMP_stepsize_and_regularization: stepsize_and_regularization
 port map (
-	a => dot,
-	areset => reset,
-	b => step_size,
 	clk => clk,
-	q => step);
+	reset => reset,
+	trigger => dot_valid,
+	dot => dot,
+	model => model_for_lambda,
+	stepsize => step_size,
+	lambda => lambda,
+	result_valid_once => step_valid_once,
+	result_valid => step_valid,
+	result => step);
+
 
 scalar_vector_mult_valid <= model_store_re_1d when do_residual_update = '1' else (a_fifo_valid and a_fifo_re);
 scalar_vector_mult_scalar <= (not model_store_dout( 32*i_model_mux_1d + 31 ) & model_store_dout( 32*i_model_mux_1d + 30 downto 32*i_model_mux_1d )) when do_residual_update = '1' else step;
@@ -581,7 +645,11 @@ if clk'event and clk = '1' then
 	resetn_internal <= resetn;
 
 	NumberOfWriteRequests <= step_NumberOfWriteRequests + residual_NumberOfWriteRequests;
-	NumberOfPendingWrites <= NumberOfWriteRequests - NumberOfWriteResponses;
+	if NumberOfWriteRequests < NumberOfWriteResponses then
+		NumberOfPendingWrites <= (others => '0');
+	else
+		NumberOfPendingWrites <= NumberOfWriteRequests - NumberOfWriteResponses;
+	end if;
 
 	for k in 1 to INPUT_VECTOR_DELAY_CYCLES loop
 		input_vector(k) <= input_vector(k-1);
@@ -589,7 +657,7 @@ if clk'event and clk = '1' then
 	residual_minus_b_trigger <= residual_store_re and b_store_re;
 	dot_almost_valid_1d <= dot_almost_valid;
 	dot_almost_valid_2d <= dot_almost_valid_1d;
-	step_valid <= dot_almost_valid_2d;
+	--step_valid <= dot_almost_valid_2d;
 
 	iNUMBER_OF_EPOCHS <= unsigned(number_of_epochs);
 	iNUMBER_OF_FEATURES <= unsigned(number_of_features);
@@ -618,6 +686,7 @@ if clk'event and clk = '1' then
 		a_NumberOfReceivedReads <= (others => '0');
 		residual_NumberOfWriteRequests <= (others => '0');
 		step_NumberOfWriteRequests <= (others => '0');
+		step_NumberOfWriteRequestsPerEpoch <= (others => '0');
 		NumberOfWriteResponses <= (others => '0');
 
 		i_residual_receive_index <= (others => '0');
@@ -635,6 +704,7 @@ if clk'event and clk = '1' then
 
 		write_residual_back <= '0';
 
+		a1_fifo_we <= '0';
 		a_fifo_we <= '0';
 
 		step_writeback_valid <= '0';
@@ -692,14 +762,17 @@ if clk'event and clk = '1' then
 		residual_store_re <= '0';
 		b_store_re <= '0';
 		model_store_re <= '0';
+		a1_fifo_we <= '0';
 		a_fifo_we <= '0';
 		if (response_a_valid = '1' and enable_decompression = '0') or decompressor_out_valid = '1' then
+			a1_fifo_we <= '1';
+			a1_fifo_din <= a_data;
 			input_vector(0) <= a_data;
 
+			model_store_raddr <= std_logic_vector(i_model_index(LOG2_MAX_NUMFEATURES-1 downto 4));
+			i_model_mux <= to_integer(i_model_index(3 downto 0));
 			if do_residual_update = '1' then
-				model_store_re <= '1';
-				model_store_raddr <= std_logic_vector(i_model_index(LOG2_MAX_NUMFEATURES-1 downto 4));
-				i_model_mux <= to_integer(i_model_index(3 downto 0));
+				model_store_re <= '1';	
 			else
 				if do_real_scd = '1' then
 					if scd_phase = '1' then
@@ -858,7 +931,7 @@ if clk'event and clk = '1' then
 		end if;
 
 
-		if step_valid = '1' then
+		if step_valid_once = '1' then
 			step_writeback( 32*(step_writeback_index+1)-1 downto 32*step_writeback_index ) <= step;
 			if step_writeback_index = 15 then
 				step_writeback_index <= 0;
@@ -870,9 +943,10 @@ if clk'event and clk = '1' then
 		if step_writeback_valid = '1' then
 			step_writeback_index <= 0;
 			write_request <= '1';
-			write_request_address <= std_logic_vector(unsigned(step_address) + step_NumberOfWriteRequests);
+			write_request_address <= std_logic_vector(unsigned(step_address) + step_NumberOfWriteRequestsPerEpoch);
 			write_request_data <= step_writeback;
 			step_NumberOfWriteRequests <= step_NumberOfWriteRequests + 1;
+			step_NumberOfWriteRequestsPerEpoch <= step_NumberOfWriteRequestsPerEpoch + 1;
 		end if;
 
 
@@ -892,6 +966,7 @@ if clk'event and clk = '1' then
 					else
 						epoch_start <= '1';
 					end if;
+					step_NumberOfWriteRequestsPerEpoch <= (others => '0');
 					completed_epochs <= completed_epochs + 1;
 				else
 					write_feature_index <= write_feature_index + 1;
@@ -904,6 +979,7 @@ if clk'event and clk = '1' then
 					else
 						epoch_start <= '1';
 					end if;
+					step_NumberOfWriteRequestsPerEpoch <= (others => '0');
 					completed_epochs <= completed_epochs + 1;
 				else
 					write_batch_index <= write_batch_index + 1;

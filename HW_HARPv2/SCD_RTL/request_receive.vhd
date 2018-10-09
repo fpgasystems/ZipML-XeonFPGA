@@ -352,21 +352,31 @@ if clk'event and clk = '1' then
 				if offset_read_index = iNUMBER_OF_OFFSET_LINES-1 then
 					offset_read_index <= (others => '0');
 					new_column_read_allowed <= '0';
-					if do_residual_update = '1' then
-						read_state <= B"100";
-					else
-						read_state <= B"001";
-					end if;
+
+					--if do_residual_update = '1' then
+					--	read_state <= B"100";
+					--else
+					--	read_state <= B"001";
+					--end if;
+					read_state <= B"100";
+
 				else
 					offset_read_index <= offset_read_index + 1;
 				end if;
 			elsif read_state = B"100" then --read model
-				read_request_address <= std_logic_vector(unsigned(step_address) + model_read_index);
+				read_request_address <= std_logic_vector(unsigned(step_address) + batch_index*iNUMBER_OF_OFFSET_LINES + model_read_index);
 				read_request_length <= B"00";
 				
 				if model_read_index = iNUMBER_OF_OFFSET_LINES-1 then
 					model_read_index <= (others => '0');
-					read_state <= B"011";
+
+					--read_state <= B"011";
+					if do_residual_update = '1' then
+						read_state <= B"011";
+					else
+						read_state <= B"001";
+					end if;
+
 				else
 					model_read_index <= model_read_index + 1;
 				end if;
@@ -455,7 +465,7 @@ if clk'event and clk = '1' then
 					iREAD_SIZE <= iBATCH_SIZE;
 				end if;
 
-				if i_index = iREAD_SIZE-1 then
+				if i_index = iREAD_SIZE-1 or iBATCH_SIZE = 1 then
 					i_index <= (others => '0');
 
 					column_previous_readsize_we <= '1';
@@ -482,7 +492,8 @@ if clk'event and clk = '1' then
 						new_column_read_allowed <= enable_staleness;
 						if feature_index = iNUMBER_OF_FEATURES-1 then
 							if do_residual_update = '0' then
-								read_state <= B"001";
+								--read_state <= B"001";
+								read_state <= B"100";
 							end if;
 							feature_index <= (others => '0');
 							batch_index <= batch_index + 1;
@@ -531,19 +542,29 @@ if clk'event and clk = '1' then
 				if i_receive_index = iNUMBER_OF_OFFSET_LINES-1 then
 					i_receive_index <= (others => '0');
 					new_column_read_allowed <= '1';
-					if do_residual_update = '1' then
-						receive_state <= B"100";
-					else
-						receive_state <= B"001";
-					end if;
+
+					--if do_residual_update = '1' then
+					--	receive_state <= B"100";
+					--else
+					--	receive_state <= B"001";
+					--end if;
+					receive_state <= B"100";
+
 				else
 					i_receive_index <= i_receive_index + 1;
 				end if;
-			elsif receive_state = B"100" then
+			elsif receive_state = B"100" then --receive model
 				out_model_valid <= '1';
 				if i_receive_index = iNUMBER_OF_OFFSET_LINES-1 then
 					i_receive_index <= (others => '0');
-					receive_state <= B"011";
+
+					--receive_state <= B"011";
+					if do_residual_update = '1' then
+						receive_state <= B"011";
+					else
+						receive_state <= B"001";
+					end if;
+
 				else
 					i_receive_index <= i_receive_index + 1;
 				end if;
@@ -589,7 +610,7 @@ if clk'event and clk = '1' then
 					out_a_valid_internal <= '1';
 				end if;
 
-				if i_receive_index = iRECEIVE_SIZE-1 then
+				if i_receive_index = iRECEIVE_SIZE-1 or iBATCH_SIZE = 1 then
 					i_receive_index <= (others => '0');
 
 					if do_real_scd = '1' then
@@ -612,7 +633,8 @@ if clk'event and clk = '1' then
 					else
 						if feature_receive_index = iNUMBER_OF_FEATURES-1 then
 							if do_residual_update = '0' then
-								receive_state <= B"001";
+								--receive_state <= B"001";
+								receive_state <= B"100";
 							end if;
 							feature_receive_index <= (others => '0');
 							batch_receive_index <= batch_receive_index + 1;

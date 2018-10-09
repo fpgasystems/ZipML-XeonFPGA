@@ -32,7 +32,7 @@
 
 using namespace std;
 
-#define PRINT_TIMING
+// #define PRINT_TIMING
 #define PRINT_LOSS
 // #define PRINT_ACCURACY
 // #define SGD_SHUFFLE
@@ -128,6 +128,7 @@ public:
 		float stepSize, 
 		float lambda, 
 		AdditionalArguments* args);
+#ifdef AVX2
 	void AVX_SGD(
 		ModelType type, 
 		float* xHistory, 
@@ -144,6 +145,7 @@ public:
 		float stepSize, 
 		float lambda, 
 		AdditionalArguments* args);
+#endif
 	void SCD(
 		ModelType type, 
 		float* xHistory, 
@@ -157,6 +159,7 @@ public:
 		bool useCompressed, 
 		uint32_t toIntegerScaler,
 		AdditionalArguments* args);
+#ifdef AVX2
 	void AVX_SCD(
 		ModelType type,
 		float* xHistory, 
@@ -183,6 +186,7 @@ public:
 		uint32_t toIntegerScaler,
 		AdditionalArguments* args,
 		uint32_t numThreads);
+#endif
 
 private:
 	inline float getDot(float* x, uint32_t sampleIndex) {
@@ -193,6 +197,7 @@ private:
 		return dot;
 	}
 
+#ifdef AVX2
 	inline float AVX_horizontalGetDot(float* x, uint32_t sampleIndex) {
 		float dot = 0.0;
 
@@ -228,6 +233,7 @@ private:
 		
 		return AVX_dot;
 	}
+#endif
 
 	void updateL2svmGradient(float* gradient, float* x, uint32_t sampleIndex, AdditionalArguments* args) {
 		float dot = getDot(x, sampleIndex);
@@ -272,6 +278,27 @@ private:
 			case linreg:
 				updateLinregGradient(gradient, x, sampleIndex);
 				break;
+		}
+	}
+	
+protected:
+	static inline void GetAveragedX (
+		uint32_t numMinibatches,
+		uint32_t numMinibatchesAtATime,
+		ColumnStore* cstore,
+		float* xFinal,
+		float* x)
+	{
+		for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
+			xFinal[j] = 0;
+		}
+		for (uint32_t k = 0; k < numMinibatches/numMinibatchesAtATime; k++) {
+			for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
+				xFinal[j] += x[k*cstore->m_numFeatures + j];
+			}
+		}
+		for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
+			xFinal[j] = xFinal[j]/(numMinibatches/numMinibatchesAtATime);
 		}
 	}
 };

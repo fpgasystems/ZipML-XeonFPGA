@@ -19,14 +19,18 @@
 #include "../driver/iFPGA.h"
 #include "ColumnML.h"
 
-#define NUM_FINSTANCES 4
+#define NUM_FINSTANCES 1
 
 class FPGA_ColumnML : public ColumnML {
 public:
 
 	FPGA_ColumnML(bool getFPGA) {
 		m_pageSizeInCacheLines = 65536; // 65536 x 64B = 4 MB
+#ifdef ASEAFU
+		m_pagesToAllocate = 4;
+#else
 		m_pagesToAllocate = 1024;
+#endif
 		m_numValuesPerLine = 16;
 
 		m_gotFPGA = false;
@@ -47,7 +51,7 @@ public:
 	}
 
 	uint32_t FPGA_PrintMemory();
-	double FPGA_SCD(
+	void FPGA_SCD(
 		ModelType type,
 		bool doRealSCD,
 		float* xHistory,
@@ -94,13 +98,13 @@ public:
 	}
 
 private:
-	uint32_t FPGA_CopyDataIntoMemory(
+	void FPGA_CopyDataIntoMemory(
 		uint32_t numMinibatches, 
 		uint32_t minibatchSize, 
 		uint32_t numMinibatchesToAssign[],
 		uint32_t numEpochs, 
 		bool useEncrypted);
-	uint32_t FPGA_CopyCompressedDataIntoMemory(
+	void FPGA_CopyCompressedDataIntoMemory(
 		uint32_t numMinibatches,
 		uint32_t minibatchSize,
 		uint32_t numMinibatchesToAssign[],

@@ -1,0 +1,36 @@
+NOTE:
+=====
+- PR bitstreams generated with BDW 502 or an earlier release are NOT compatible with BDW 503 blue bitstream. 
+- All AFUs should be recompiled with BDW 503 HW release package to be used with BDW 503 blue bitstream in system.
+- The ONLY supported Quartus version for this release is Quartus Prime Pro 16.0.0 Build 211
+
+Compilation Flow:
+================
+run.sh   - Batch script to run the 2 compile steps required for AFU synthesis.
+           Before you run this, be sure to add your AFU source files to bdw_503_pr_afu_synth.qsf
+clean.sh - cleans up the run dir and copies SR libs
+
+Remote signalTap:
+================
+When using remote signalTap, the STP has to be enabled on both project revisions.
+
+AFU sub-floorplan: 
+==================
+AFU floorplan assignments (if needed) should be added to bdw_503_pr_afu.qsf
+
+AFU SDCs:
+========
+SDCs required for AFU should be added to bdw_503_pr_afu.qsf
+
+Recommendations:
+===============
+- User AFUs should be instantiated inside ccip_std_afu.sv
+- All inputs and outputs at AFU top level should be registered and floorplanned close to the PR region interface (if necessary)
+
+User Clocks in BDW 503 Release:
+==============================
+In this project the user clocks at CCI-P interface are statically configured as follows:
+uClk_usrDiv2 - 136.37 MHz
+uClk_usr     - 272.78 MHz
+
+Ability to program these clocks to arbitrary frequencies will be enabled in a future release. 

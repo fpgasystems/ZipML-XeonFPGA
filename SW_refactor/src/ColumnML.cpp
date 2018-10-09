@@ -236,6 +236,7 @@ void ColumnML::SGD(
 	free(gradient);
 }
 
+#ifdef AVX2
 void ColumnML::AVX_SGD(
 	ModelType type, 
 	float* xHistory, 
@@ -499,6 +500,7 @@ void ColumnML::AVXrowwise_SGD(
 	free(gradient);
 	free(samples);
 }
+#endif
 
 static inline void UpdateResidual(
 	float* residual,
@@ -521,6 +523,7 @@ static inline void UpdateResidual(
 	}
 }
 
+#ifdef AVX2
 static inline void AVX_UpdateResidual(
 	float* residual,
 	uint32_t coordinate,
@@ -544,6 +547,7 @@ static inline void AVX_UpdateResidual(
 		_mm256_store_ps(residual + minibatchIndex*minibatchSize + i, AVX_residual);
 	}
 }
+#endif
 
 static inline void DoStep(
 	ModelType type,
@@ -576,7 +580,13 @@ static inline void DoStep(
 	timeStamp2 = get_time();
 	dotTime += (timeStamp2-timeStamp1);
 
+	cout << "----------------------" << endl;
+	cout << "gradient: " << gradient << endl;
+
 	float step = scaledStepSize*gradient;
+
+	cout << "step: " << step << endl;
+	cout << "model: " << x[minibatchIndex[0]*cstore->m_numFeatures + coordinate] << endl;
 
 	if (x[minibatchIndex[0]*cstore->m_numFeatures + coordinate] - step > scaledLambda) {
 		step += scaledLambda;
@@ -586,7 +596,10 @@ static inline void DoStep(
 	}
 	else {
 		step = x[minibatchIndex[0]*cstore->m_numFeatures + coordinate];
-	}	
+	}
+
+	cout << "step after lambda: " << step << endl;
+
 	x[minibatchIndex[0]*cstore->m_numFeatures + coordinate] -= step;
 
 
@@ -599,6 +612,7 @@ static inline void DoStep(
 	residualUpdateTime += (timeStamp3-timeStamp2);
 }
 
+#ifdef AVX2
 static inline float AVX_GetStep(
 	ModelType type,
 	float* residual,
@@ -677,27 +691,7 @@ static inline void AVX_ApplyStep(
 	timeStamp2 = get_time();
 	residualUpdateTime += (timeStamp2-timeStamp1);
 }
-
-
-static inline void GetAveragedX (
-	uint32_t numMinibatches,
-	uint32_t numMinibatchesAtATime,
-	ColumnStore* cstore,
-	float* xFinal,
-	float* x)
-{
-	for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
-		xFinal[j] = 0;
-	}
-	for (uint32_t k = 0; k < numMinibatches/numMinibatchesAtATime; k++) {
-		for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
-			xFinal[j] += x[k*cstore->m_numFeatures + j];
-		}
-	}
-	for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
-		xFinal[j] = xFinal[j]/(numMinibatches/numMinibatchesAtATime);
-	}
-}
+#endif
 
 void ColumnML::SCD(
 	ModelType type, 
@@ -721,8 +715,8 @@ void ColumnML::SCD(
 
 	float* residual = (float*)aligned_alloc(64, args->m_numSamples*sizeof(float));
 	memset(residual, 0, args->m_numSamples*sizeof(float));
-	float* x = (float*)aligned_alloc(64, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
-	memset(x, 0, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
+	float* x = (float*)aligned_alloc(64, numMinibatches*m_cstore->m_numFeatures*sizeof(float));
+	memset(x, 0, numMinibatches*m_cstore->m_numFeatures*sizeof(float));
 	float* xFinal = (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
 	memset(xFinal, 0, m_cstore->m_numFeatures*sizeof(float));
 	
@@ -834,6 +828,7 @@ void ColumnML::SCD(
 	free(residual);
 }
 
+#ifdef AVX2
 void ColumnML::AVX_SCD(
 		ModelType type,
 		float* xHistory, 
@@ -860,8 +855,8 @@ void ColumnML::AVX_SCD(
 
 	float* residual = (float*)aligned_alloc(64, args->m_numSamples*sizeof(float));
 	memset(residual, 0, args->m_numSamples*sizeof(float));
-	float* x = (float*)aligned_alloc(64, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
-	memset(x, 0, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
+	float* x = (float*)aligned_alloc(64, numMinibatches*m_cstore->m_numFeatures*sizeof(float));
+	memset(x, 0, numMinibatches*m_cstore->m_numFeatures*sizeof(float));
 	float* xFinal = (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
 	memset(xFinal, 0, m_cstore->m_numFeatures*sizeof(float));
 
@@ -1255,8 +1250,8 @@ double ColumnML::AVXmulti_SCD (
 	uint32_t rest = args->m_numSamples - numMinibatches*minibatchSize;
 	cout << "rest: " << rest << endl;
 
-	float* x = (float*)aligned_alloc(64, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
-	memset(x, 0, (numMinibatches + args->m_numSamples%minibatchSize)*m_cstore->m_numFeatures*sizeof(float));
+	float* x = (float*)aligned_alloc(64, numMinibatches*m_cstore->m_numFeatures*sizeof(float));
+	memset(x, 0, numMinibatches*m_cstore->m_numFeatures*sizeof(float));
 	float stepsFromThreads[MAX_NUM_THREADS];
 
 	float* xFinal= (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
@@ -1341,3 +1336,4 @@ double ColumnML::AVXmulti_SCD (
 
 	return thread_args[0].m_averageEpochTime;
 }
+#endif

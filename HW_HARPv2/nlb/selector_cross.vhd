@@ -518,7 +518,7 @@ process(clk_400)
 begin
 if clk_400'event and clk_400 = '1' then
     write_request <= '0';
-    if write_request_fifo_rdreq_1d(0) = '1' then
+    if write_request_fifo_rdreq(0) = '1' and write_request_fifo_rdreq_1d(0) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(0)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(0)(511 downto 0);
@@ -534,14 +534,14 @@ process(clk_400)
 begin
 if clk_400'event and clk_400 = '1' then
     write_request <= '0';
-    if write_request_fifo_rdreq_1d(0) = '1' then
+    if write_request_fifo_rdreq(0) = '1' and write_request_fifo_rdreq_1d(0) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(0)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(0)(511 downto 0);
         write_request_transactionID_internal <= B"00" & write_request_fifo_q(0)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
 
         NumberOfWriteRequests <= NumberOfWriteRequests + 1;
-    elsif write_request_fifo_rdreq_1d(1) = '1' then
+    elsif write_request_fifo_rdreq(1) = '1' and write_request_fifo_rdreq_1d(1) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(1)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(1)(511 downto 0);
@@ -557,21 +557,21 @@ process(clk_400)
 begin
 if clk_400'event and clk_400 = '1' then
     write_request <= '0';
-    if write_request_fifo_rdreq_1d(0) = '1' then
+    if write_request_fifo_rdreq(0) = '1' and write_request_fifo_rdreq_1d(0) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(0)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(0)(511 downto 0);
         write_request_transactionID_internal <= B"00" & write_request_fifo_q(0)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
 
         NumberOfWriteRequests <= NumberOfWriteRequests + 1;
-    elsif write_request_fifo_rdreq_1d(1) = '1' then
+    elsif write_request_fifo_rdreq(1) = '1' and write_request_fifo_rdreq_1d(1) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(1)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(1)(511 downto 0);
         write_request_transactionID_internal <= B"01" & write_request_fifo_q(1)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
 
         NumberOfWriteRequests <= NumberOfWriteRequests + 1;
-    elsif write_request_fifo_rdreq_1d(2) = '1' then
+    elsif write_request_fifo_rdreq(2) = '1' and write_request_fifo_rdreq_1d(2) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(2)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(2)(511 downto 0);
@@ -587,28 +587,28 @@ process(clk_400)
 begin
 if clk_400'event and clk_400 = '1' then
     write_request <= '0';
-    if write_request_fifo_rdreq_1d(0) = '1' then
+    if write_request_fifo_rdreq(0) = '1' and write_request_fifo_rdreq_1d(0) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(0)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(0)(511 downto 0);
         write_request_transactionID_internal <= B"00" & write_request_fifo_q(0)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
 
         NumberOfWriteRequests <= NumberOfWriteRequests + 1;
-    elsif write_request_fifo_rdreq_1d(1) = '1' then
+    elsif write_request_fifo_rdreq(1) = '1' and write_request_fifo_rdreq_1d(1) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(1)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(1)(511 downto 0);
         write_request_transactionID_internal <= B"01" & write_request_fifo_q(1)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
 
         NumberOfWriteRequests <= NumberOfWriteRequests + 1;
-    elsif write_request_fifo_rdreq_1d(2) = '1' then
+    elsif write_request_fifo_rdreq(2) = '1' and write_request_fifo_rdreq_1d(2) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(2)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(2)(511 downto 0);
         write_request_transactionID_internal <= B"10" & write_request_fifo_q(2)(13+512+ADDRESS_WIDTH downto 512+ADDRESS_WIDTH);
 
         NumberOfWriteRequests <= NumberOfWriteRequests + 1;
-    elsif write_request_fifo_rdreq_1d(3) = '1' then
+    elsif write_request_fifo_rdreq(3) = '1' and write_request_fifo_rdreq_1d(3) = '1' then
         write_request <= '1';
         write_request_address_internal <= write_request_fifo_q(3)(512+ADDRESS_WIDTH-1 downto 512);
         write_request_data_internal <= write_request_fifo_q(3)(511 downto 0);

@@ -40,7 +40,7 @@ constant VALUES_PER_LINE : integer := 2**LOG2_VALUES_PER_LINE;
 
 signal reset : std_logic;
 
-constant CONVERSION_LATENCY : integer := 4;
+constant CONVERSION_LATENCY : integer := 2;
 
 signal accumulation_count_unsigned : unsigned(31 downto 0);
 
@@ -60,7 +60,7 @@ signal accumulation : signed(47 downto 0);
 signal valid_pulse_counter : unsigned(31 downto 0);
 signal valid_pulse_counter_actual : unsigned(31 downto 0);
 
-signal internal_result_valid : std_logic_vector(CONVERSION_LATENCY+3 downto 0);
+signal internal_result_valid : std_logic_vector(CONVERSION_LATENCY downto 0);
 signal internal_result : signed(47 downto 0);
 
 type float_vector_type is array(15 downto 0) of std_logic_vector(31 downto 0);
@@ -197,7 +197,7 @@ if clk'event and clk = '1' then
 			end if;
 		end if;
 
-		if internal_result_valid(CONVERSION_LATENCY+3) = '1' then
+		if internal_result_valid(CONVERSION_LATENCY) = '1' then
 			valid_pulse_counter <= accumulation_count_unsigned-1;
 			valid_pulse_counter_actual <= accumulation_count_unsigned;
 		end if;
@@ -218,7 +218,7 @@ if clk'event and clk = '1' then
 			valid_pulse_counter <= valid_pulse_counter + 1;
 		end if;
 
-		for i in 1 to CONVERSION_LATENCY+3 loop
+		for i in 1 to CONVERSION_LATENCY loop
 			internal_result_valid(i) <= internal_result_valid(i-1);
 		end loop;
 	end if;

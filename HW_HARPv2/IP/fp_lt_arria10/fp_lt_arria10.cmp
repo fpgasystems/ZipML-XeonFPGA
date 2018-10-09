@@ -1,0 +1,10 @@
+	component fp_lt_arria10 is
+		port (
+			a      : in  std_logic_vector(31 downto 0) := (others => 'X'); -- a
+			areset : in  std_logic                     := 'X';             -- reset
+			b      : in  std_logic_vector(31 downto 0) := (others => 'X'); -- b
+			clk    : in  std_logic                     := 'X';             -- clk
+			q      : out std_logic_vector(0 downto 0)                      -- q
+		);
+	end component fp_lt_arria10;
+
