@@ -8,6 +8,15 @@ quartus.ini
 ome2_ivt.qsf
 ome2_ivt.done
 ome_bot-CCIS.qarlog
+*.qsys
+*.sopcinfo
+.qsys_edit
+*.qarlog
+output_files
+*.qdb
+*.stp
+qdb
+serv_req_info.txt
 
 #For MACOSX file manager
 *.DS_Store

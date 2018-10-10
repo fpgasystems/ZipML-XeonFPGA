@@ -222,6 +222,7 @@ signal number_of_batches : std_logic_vector(15 downto 0) := (others => '0');
 signal batch_size : std_logic_vector(15 downto 0) := (others => '0');
 signal step_size : std_logic_vector(31 downto 0) := (others => '0');
 signal lambda : std_logic_vector(31 downto 0) := (others => '0');
+signal do_sigmoid : std_logic;
 signal number_of_epochs : std_logic_vector(15 downto 0) := (others => '0');
 component floatFSCD
 generic(ADDRESS_WIDTH : integer := 32;
@@ -269,6 +270,7 @@ port(
 	batch_size : in std_logic_vector(15 downto 0);
 	step_size : in std_logic_vector(31 downto 0);
 	lambda : in std_logic_vector(31 downto 0);
+	do_sigmoid : in std_logic;
 	number_of_epochs : in std_logic_vector(15 downto 0));
 end component;
 
@@ -372,6 +374,7 @@ port map (
 	batch_size => batch_size,
 	step_size => step_size,
 	lambda => lambda,
+	do_sigmoid => do_sigmoid,
 	number_of_epochs => number_of_epochs);
 process(clk_200)
 begin
@@ -403,6 +406,7 @@ if clk_200'event and clk_200 = '1' then
 		batch_size <= config3(63 downto 48);
 		step_size <= config4(31 downto 0);
 		lambda <= config5(63 downto 32);
+		do_sigmoid <= config5(26);
 		number_of_epochs <= config4(47 downto 32);
 	end if;
 end if;

@@ -580,13 +580,7 @@ static inline void DoStep(
 	timeStamp2 = get_time();
 	dotTime += (timeStamp2-timeStamp1);
 
-	cout << "----------------------" << endl;
-	cout << "gradient: " << gradient << endl;
-
 	float step = scaledStepSize*gradient;
-
-	cout << "step: " << step << endl;
-	cout << "model: " << x[minibatchIndex[0]*cstore->m_numFeatures + coordinate] << endl;
 
 	if (x[minibatchIndex[0]*cstore->m_numFeatures + coordinate] - step > scaledLambda) {
 		step += scaledLambda;
@@ -598,10 +592,7 @@ static inline void DoStep(
 		step = x[minibatchIndex[0]*cstore->m_numFeatures + coordinate];
 	}
 
-	cout << "step after lambda: " << step << endl;
-
 	x[minibatchIndex[0]*cstore->m_numFeatures + coordinate] -= step;
-
 
 	for (uint32_t l = 0; l < numMinibatchesAtATime; l++) {
 		for (uint32_t i = 0; i < minibatchSize; i++) {

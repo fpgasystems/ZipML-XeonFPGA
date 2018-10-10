@@ -1,0 +1,20 @@
+# system info fp_exp_arria10_nohard on 2018.10.10.12:42:52
+system_info:
+name,value
+DEVICE,10AS016C3U19E2LG
+DEVICE_FAMILY,Arria 10
+GENERATION_ID,1539168171
+#
+#
+# Files generated for fp_exp_arria10_nohard on 2018.10.10.12:42:52
+files:
+filepath,kind,attributes,module,is_top
+sim/fp_exp_arria10_nohard.v,VERILOG,CONTAINS_INLINE_CONFIGURATION,fp_exp_arria10_nohard,true
+altera_fp_functions_160/sim/dspba_library_package.vhd,VHDL,,fp_exp_arria10_nohard_altera_fp_functions_160_724m2py,false
+altera_fp_functions_160/sim/dspba_library.vhd,VHDL,,fp_exp_arria10_nohard_altera_fp_functions_160_724m2py,false
+altera_fp_functions_160/sim/fp_exp_arria10_nohard_altera_fp_functions_160_724m2py.vhd,VHDL,,fp_exp_arria10_nohard_altera_fp_functions_160_724m2py,false
+#
+# Map from instance-path to kind of module
+instances:
+instancePath,module
+fp_exp_arria10_nohard.fp_functions_0,fp_exp_arria10_nohard_altera_fp_functions_160_724m2py

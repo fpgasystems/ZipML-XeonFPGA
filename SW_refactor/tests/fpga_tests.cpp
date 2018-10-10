@@ -61,7 +61,7 @@ int main(int argc, char* argv[]) {
 	ModelType type;
 	if ( strcmp(pathToDataset, "syn") == 0) {
 		columnML->m_cstore->GenerateSyntheticData(numSamples, numFeatures, false, MinusOneToOne);
-		type = linreg;
+		type = logreg;
 	}
 	else {
 		columnML->m_cstore->LoadRawData(pathToDataset, numSamples, numFeatures, true);

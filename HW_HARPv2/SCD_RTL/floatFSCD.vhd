@@ -65,6 +65,7 @@ port(
 	batch_size : in std_logic_vector(15 downto 0);
 	step_size : in std_logic_vector(31 downto 0);
 	lambda : in std_logic_vector(31 downto 0);
+	do_sigmoid : in std_logic;
 	number_of_epochs : in std_logic_vector(15 downto 0));
 end floatFSCD;
 
@@ -193,7 +194,6 @@ signal scalar_vector_mult_scalar : std_logic_vector(31 downto 0);
 signal scalar_vector_mult_vector : std_logic_vector(511 downto 0);
 
 signal residual_minus_b_trigger : std_logic;
-signal residual_minus_b_almost_valid : std_logic;
 signal residual_minus_b_valid : std_logic;
 signal residual_minus_b : std_logic_vector(511 downto 0);
 
@@ -211,7 +211,6 @@ signal delta_valid : std_logic;
 signal delta : std_logic_vector(511 downto 0);
 signal delta0 : std_logic_vector(31 downto 0);
 
-signal new_residual_almost_valid : std_logic;
 signal new_residual_valid : std_logic;
 signal new_residual : std_logic_vector(511 downto 0);
 signal new_residual0 : std_logic_vector(31 downto 0);
@@ -331,7 +330,7 @@ port (
 	trigger : in std_logic;
 	vector1 : in std_logic_vector(32*VALUES_PER_LINE-1 downto 0);
 	vector2 : in std_logic_vector(32*VALUES_PER_LINE-1 downto 0);
-	result_almost_valid : out std_logic;
+	do_sigmoid : in std_logic;
 	result_valid : out std_logic;
 	result : out std_logic_vector(32*VALUES_PER_LINE-1 downto 0));
 end component;
@@ -353,17 +352,6 @@ port (
 	result_valid : out std_logic;
 	result : out std_logic_vector(31 downto 0));
 end component;
-
-
---component fp_mult_arria10
---	port (
---		a      : in  std_logic_vector(31 downto 0) := (others => '0'); --      a.a
---		areset : in  std_logic                     := '0';             -- areset.reset
---		b      : in  std_logic_vector(31 downto 0) := (others => '0'); --      b.b
---		clk    : in  std_logic                     := '0';             --    clk.clk
---		q      : out std_logic_vector(31 downto 0)                     --      q.q
---	);
---end component;
 
 component stepsize_and_regularization
 generic (VALUES_PER_LINE : integer := 16);
@@ -537,7 +525,6 @@ port map (
 	almostfull => a1_fifo_almostfull,
 	count => a1_fifo_count);
 
---a_fifo_re <= dot_valid;
 a_fifo_re <= step_valid;
 a_fifo: normal2axis_fifo
 generic map (
@@ -566,7 +553,7 @@ port map (
 	trigger => residual_minus_b_trigger,
 	vector1 => residual_store_dout,
 	vector2 => b_store_dout,
-	result_almost_valid => residual_minus_b_almost_valid,
+	do_sigmoid => do_sigmoid,
 	result_valid => residual_minus_b_valid,
 	result => residual_minus_b);
 
@@ -581,19 +568,11 @@ port map (
 	trigger => residual_minus_b_valid,
 	accumulation_count => dot_product_accumulation_count,
 	vector1 => residual_minus_b,
-	vector2 => a1_fifo_dout, --input_vector(INPUT_VECTOR_DELAY_CYCLES),
+	vector2 => a1_fifo_dout,
 	valid_allowed => dot_valid_allowed,
 	result_almost_valid => dot_almost_valid,
 	result_valid => dot_valid,
 	result => dot);
-
---COMP_step_size_mult: fp_mult_arria10
---port map (
---	a => dot,
---	areset => reset,
---	b => step_size,
---	clk => clk,
---	q => step);
 
 model_for_lambda <= model_store_dout( 32*i_model_mux_1d + 31 downto 32*i_model_mux_1d );
 COMP_stepsize_and_regularization: stepsize_and_regularization
@@ -635,7 +614,7 @@ port map (
 	trigger => delta_valid,
 	vector1 => residual_store_loading_dout,
 	vector2 => delta,
-	result_almost_valid => new_residual_almost_valid,
+	do_sigmoid => '0',
 	result_valid => new_residual_valid,
 	result => new_residual);
 
@@ -657,7 +636,6 @@ if clk'event and clk = '1' then
 	residual_minus_b_trigger <= residual_store_re and b_store_re;
 	dot_almost_valid_1d <= dot_almost_valid;
 	dot_almost_valid_2d <= dot_almost_valid_1d;
-	--step_valid <= dot_almost_valid_2d;
 
 	iNUMBER_OF_EPOCHS <= unsigned(number_of_epochs);
 	iNUMBER_OF_FEATURES <= unsigned(number_of_features);
@@ -803,16 +781,16 @@ if clk'event and clk = '1' then
 					else
 						i_batch_index <= i_batch_index + 1;
 					end if;
-					if scd_phase = '0' then
-						allowed_new_column_read <= '1';
-					end if;
+					--if scd_phase = '0' then
+					--	allowed_new_column_read <= '1';
+					--end if;
 				else
 					if i_model_index = iNUMBER_OF_FEATURES-1 then
 						i_model_index <= (others => '0');
 					else
 						i_model_index <= i_model_index + 1;
 					end if;
-					allowed_new_column_read <= '1';
+					--allowed_new_column_read <= '1';
 				end if;
 			else
 				i_receive_index <= i_receive_index + 1;
@@ -863,6 +841,9 @@ if clk'event and clk = '1' then
 					else
 						batch_update_index <= batch_update_index + 1;
 					end if;
+					if scd_phase = '0' then
+						allowed_new_column_read <= '1';
+					end if;
 				else
 					if feature_update_index = iNUMBER_OF_FEATURES-1 then
 						feature_update_index <= (others => '0');
@@ -873,6 +854,7 @@ if clk'event and clk = '1' then
 					else
 						feature_update_index <= feature_update_index + 1;
 					end if;
+					allowed_new_column_read <= '1';
 				end if;
 			else
 				i_update_index <= i_update_index + 1;

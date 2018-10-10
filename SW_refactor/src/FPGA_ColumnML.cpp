@@ -282,6 +282,8 @@ void FPGA_ColumnML::FPGA_SCD(
 	uint32_t* scaledStepSizeAddr = (uint32_t*) &scaledStepSize;
 	uint32_t* scaledLambdaAddr = (uint32_t*) &scaledLambda;
 
+	uint64_t doSigmoid = (type == logreg) ? 1 : 0;
+
 	uint64_t config[NUM_FINSTANCES][5];
 	for (uint32_t n = 0; n < NUM_FINSTANCES; n++) {
 		m_interfaceFPGA->m_pALIMMIOService->mmioWrite32(CSR_NUM_LINES, n);
@@ -301,7 +303,7 @@ void FPGA_ColumnML::FPGA_SCD(
 		config[n][3] = ((uint64_t)numEpochs << 32) | ((uint64_t)*scaledStepSizeAddr);
 
 		config[n][4] = 0;
-		config[n][4] = (((uint64_t)*scaledLambdaAddr) << 32) | ((uint64_t)doRealSCD << 25) | ((uint64_t)15 << 20) | ((uint64_t)useEncrypted << 19) | ((uint64_t)enableMultiLine << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;	
+		config[n][4] = (((uint64_t)*scaledLambdaAddr) << 32) | (doSigmoid) << 26 | ((uint64_t)doRealSCD << 25) | ((uint64_t)15 << 20) | ((uint64_t)useEncrypted << 19) | ((uint64_t)enableMultiLine << 18) | ((uint64_t)toIntegerScaler << 2) | ((uint64_t)useCompressed << 1) | (uint64_t)enableStaleness;	
 	}
 	if (useEncrypted) {
 		uint64_t temp = 0;
