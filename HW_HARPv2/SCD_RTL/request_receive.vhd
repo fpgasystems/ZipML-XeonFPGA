@@ -176,6 +176,22 @@ port (
 	out_data : out std_logic_vector(511 downto 0));
 end component;
 
+component AESDEC_CBC_256bit
+port (
+	clk : in std_logic;
+	resetn : in std_logic;
+
+	in_valid : in std_logic;
+	in_data : in std_logic_vector(511 downto 0);
+	in_length : in std_logic_vector(15 downto 0);
+
+	program_key_index : in std_logic_vector(3 downto 0);
+	program_key : in std_logic_vector(127 downto 0);
+
+	out_valid : out std_logic;
+	out_data : out std_logic_vector(511 downto 0));
+end component;
+
 component simple_dual_port_ram_single_clock
 generic(
 	DATA_WIDTH : natural := 8;
@@ -213,7 +229,7 @@ port map (
 AESDEC_CBC_in_valid <= out_a_valid_internal when enable_decryption = '1' else '0';
 AESDEC_CBC_in_data <= out_data_internal;
 AESDEC_CBC_length <= iREAD_SIZE-1 when (read_size_from_memory = '1' and iREAD_SIZE > 0) else iREAD_SIZE;
-AESDEC_CBC_inst: AESDEC_CBC
+AESDEC_CBC_inst: AESDEC_CBC_256bit
 port map (
 	clk => clk,
 	resetn => resetn,
@@ -229,6 +245,9 @@ port map (
 	out_data => AESDEC_CBC_out_data);
 out_a_valid <= AESDEC_CBC_out_valid when enable_decryption = '1' else out_a_valid_internal;
 out_data <= AESDEC_CBC_out_data when (AESDEC_CBC_out_valid = '1' and enable_decryption = '1') else out_data_internal;
+---- Disable Decryption
+--out_a_valid <= out_a_valid_internal;
+--out_data <= out_data_internal;
 
 column_offset_raddr <= std_logic_vector( feature_index(LOG2_MAX_NUMFEATURES-1 downto 4) );
 column_offset_store: simple_dual_port_ram_single_clock
@@ -275,7 +294,7 @@ if clk'event and clk = '1' then
 
 	out_data_internal <= reordered_response_data;
 
-	NumberOfPendingReads <= NumberOfRequestedReads - NumberOfReceivedReads;
+	NumberOfPendingReads <= NumberOfRequestedReads - (NumberOfReceivedReads + a_NumberOfReceivedReads);
 
 	column_offset_intermediate <= 	unsigned( column_offset_dout( feature_index_in_line*32+31 downto feature_index_in_line*32 ) ) +
 									unsigned( column_previous_readsize_dout( feature_index_in_line*32+31 downto feature_index_in_line*32 ) );
@@ -532,10 +551,10 @@ if clk'event and clk = '1' then
 		out_b_valid <= '0';
 		out_a_valid_internal <= '0';
 		if reordered_resonse = '1' then
-			NumberOfReceivedReads <= NumberOfReceivedReads + 1;
 			out_index <= std_logic_vector(i_receive_index);
 
 			if receive_state = B"000" then
+				NumberOfReceivedReads <= NumberOfReceivedReads + 1;
 				column_offset_we <= '1';
 				column_offset_din <= reordered_response_data;
 				column_offset_waddr <= std_logic_vector( i_receive_index(LOG2_MAX_NUMFEATURES-4-1 downto 0) );
@@ -554,6 +573,7 @@ if clk'event and clk = '1' then
 					i_receive_index <= i_receive_index + 1;
 				end if;
 			elsif receive_state = B"100" then --receive model
+				NumberOfReceivedReads <= NumberOfReceivedReads + 1;
 				out_model_valid <= '1';
 				if i_receive_index = iNUMBER_OF_OFFSET_LINES-1 then
 					i_receive_index <= (others => '0');
@@ -570,6 +590,7 @@ if clk'event and clk = '1' then
 				end if;
 				model_NumberOfReceivedReads <= model_NumberOfReceivedReads + 1;
 			elsif receive_state = B"001" then --receive residual
+				NumberOfReceivedReads <= NumberOfReceivedReads + 1;
 				out_residual_valid <= '1';
 				if i_receive_index = iBATCH_SIZE-1 then
 					i_receive_index <= (others => '0');
@@ -587,6 +608,7 @@ if clk'event and clk = '1' then
 				end if;
 				residual_NumberOfReceivedReads <= residual_NumberOfReceivedReads + 1;
 			elsif receive_state = B"010" then --receive b
+				NumberOfReceivedReads <= NumberOfReceivedReads + 1;
 				out_b_valid <= '1';
 				if i_receive_index = iBATCH_SIZE-1 then
 					i_receive_index <= (others => '0');
@@ -646,8 +668,12 @@ if clk'event and clk = '1' then
 					i_receive_index <= i_receive_index + 1;
 				end if;
 
-				a_NumberOfReceivedReads <= a_NumberOfReceivedReads + 1;
+				--a_NumberOfReceivedReads <= a_NumberOfReceivedReads + 1;
 			end if;
+		end if;
+
+		if (enable_decryption = '1' and AESDEC_CBC_out_valid = '1') or (enable_decryption = '0' and out_a_valid_internal = '1') then
+			a_NumberOfReceivedReads <= a_NumberOfReceivedReads + 1;
 		end if;
 
 		if allowed_new_column_read = '1' then

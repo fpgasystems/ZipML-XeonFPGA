@@ -76,6 +76,8 @@ int main(int argc, char* argv[]) {
 	args.m_numSamples = columnML->m_cstore->m_numSamples;
 	args.m_constantStepSize = false;
 
+	columnML->m_cstore->EncryptSamples(minibatchSize, false);
+
 	columnML->SCD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, 1, 10, false, false, VALUE_TO_INT_SCALER, &args);
 
 	columnML->FPGA_SCD(
@@ -87,12 +89,12 @@ int main(int argc, char* argv[]) {
 		stepSize,
 		lambda,
 		10,
-		false,
+		true,
 		false,
 		false,
 		VALUE_TO_INT_SCALER,
 		&args,
-		1);
+		4);
 
 	return 0;
 }

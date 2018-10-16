@@ -322,7 +322,7 @@ port (
 	out_fifo_free_count : out std_logic_vector(LOG2_BUFFER_DEPTH downto 0));
 end component;
 
-component float_vector_subtract
+component float_vector_subtract_sigmoid
 generic (VALUES_PER_LINE : integer := 16);
 port (
 	clk : in std_logic;
@@ -331,6 +331,18 @@ port (
 	vector1 : in std_logic_vector(32*VALUES_PER_LINE-1 downto 0);
 	vector2 : in std_logic_vector(32*VALUES_PER_LINE-1 downto 0);
 	do_sigmoid : in std_logic;
+	result_valid : out std_logic;
+	result : out std_logic_vector(32*VALUES_PER_LINE-1 downto 0));
+end component;
+
+component float_vector_subtract
+generic (VALUES_PER_LINE : integer := 16);
+port (
+	clk : in std_logic;
+	resetn : in std_logic;
+	trigger : in std_logic;
+	vector1 : in std_logic_vector(32*VALUES_PER_LINE-1 downto 0);
+	vector2 : in std_logic_vector(32*VALUES_PER_LINE-1 downto 0);
 	result_valid : out std_logic;
 	result : out std_logic_vector(32*VALUES_PER_LINE-1 downto 0));
 end component;
@@ -544,7 +556,7 @@ port map (
 	almostfull => a_fifo_almostfull,
 	count => a_fifo_count);
 
-COMP_residual_minus_b: float_vector_subtract
+COMP_residual_minus_b: float_vector_subtract_sigmoid
 generic map (
 	VALUES_PER_LINE => VALUES_PER_LINE)
 port map (
@@ -614,7 +626,6 @@ port map (
 	trigger => delta_valid,
 	vector1 => residual_store_loading_dout,
 	vector2 => delta,
-	do_sigmoid => '0',
 	result_valid => new_residual_valid,
 	result => new_residual);
 
