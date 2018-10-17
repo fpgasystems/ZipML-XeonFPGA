@@ -222,6 +222,11 @@ void FPGA_ColumnML::FPGA_SCD(
 	AdditionalArguments* args,
 	uint32_t numInstancesToUse)
 {
+	if (numInstancesToUse > NUM_FINSTANCES) {
+		cout << "numInstancesToUse is larger than NUM_FINSTANCES" << endl;
+		exit(1);
+	}
+
 	cout << "SCD ---------------------------------------" << endl;
 	uint32_t numMinibatches = args->m_numSamples/minibatchSize;
 	cout << "numMinibatches: " << numMinibatches << endl;

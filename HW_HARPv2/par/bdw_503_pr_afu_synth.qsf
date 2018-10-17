@@ -75,7 +75,7 @@ set_global_assignment -name VERILOG_FILE ../../HW_HARPv2/nlb/QSYS_IPs/FIFO/async
 set_global_assignment -name QIP_FILE ../../HW_HARPv2/IP/fp_converter_arria10/fp_converter_arria10.qip
 set_global_assignment -name QIP_FILE ../../HW_HARPv2/IP/fp_converter48_arria10/fp_converter48_arria10.qip
 set_global_assignment -name QIP_FILE ../../HW_HARPv2/IP/fp_div_arria10/fp_div_arria10.qip
-set_global_assignment -name QIP_FILE ../../HW_HARPv2/IP/fp_exp_arria10_nohard/fp_div_arria10_nohard.qip
+set_global_assignment -name QIP_FILE ../../HW_HARPv2/IP/fp_exp_arria10_nohard/fp_exp_arria10_nohard.qip
 set_global_assignment -name QIP_FILE ../../HW_HARPv2/IP/fp_gt_arria10/fp_gt_arria10.qip
 set_global_assignment -name QIP_FILE ../../HW_HARPv2/IP/fp_lt_arria10/fp_lt_arria10.qip
 set_global_assignment -name QIP_FILE ../../HW_HARPv2/IP/fp_mult_arria10/fp_mult_arria10.qip
@@ -88,6 +88,7 @@ set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/float_scalar_vecto
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/float_sigmoid.vhd
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/float_vector_mult.vhd
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/float_vector_subtract.vhd
+set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/float_vector_subtract_sigmoid.vhd
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/floatFSCD.vhd
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/hybrid_dot_product.vhd
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/normal2axis_fifo.vhd
@@ -95,9 +96,12 @@ set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/reorder.vhd
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/request_receive.vhd
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/simple_dual_port_ram.vhd
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/stepsize_and_regularization.vhd
+set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/width_assembler.vhd
+set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/width_reducer.vhd
 
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/AES/AESDEC.vhd
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/AES/AESDEC_CBC.vhd
+set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/AES/AESDEC_CBC_256bit.vhd
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/AES/GF256Mult.vhd
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/AES/InvMixColumns.vhd
 set_global_assignment -name VHDL_FILE ../../HW_HARPv2/SCD_RTL/AES/InvSBox.vhd

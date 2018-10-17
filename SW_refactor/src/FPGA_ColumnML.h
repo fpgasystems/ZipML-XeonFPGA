@@ -19,7 +19,7 @@
 #include "../driver/iFPGA.h"
 #include "ColumnML.h"
 
-#define NUM_FINSTANCES 1
+#define NUM_FINSTANCES 4
 
 class FPGA_ColumnML : public ColumnML {
 public:

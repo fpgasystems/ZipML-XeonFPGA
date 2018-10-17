@@ -36,7 +36,10 @@ architecture behavioral of float_scalar_vector_mult is
 
 signal reset : std_logic;
 
-constant TOTAL_LATENCY : integer := 3;
+signal internal_scalar : std_logic_vector(31 downto 0);
+signal internal_vector : std_logic_vector(32*VALUES_PER_LINE-1 downto 0);
+
+constant TOTAL_LATENCY : integer := 4;
 
 signal internal_trigger : std_logic_vector(TOTAL_LATENCY-1 downto 0);
 
@@ -59,9 +62,9 @@ reset <= not resetn;
 
 GenFP_MULT: for k in 0 to VALUES_PER_LINE-1 generate
 	fp_mult_arria10_inst: fp_mult_arria10 PORT MAP(
-		a => scalar,
+		a => internal_scalar,
 		areset => reset,
-		b => vector(k*32+31 downto k*32),
+		b => internal_vector(k*32+31 downto k*32),
 		clk => clk,
 		q => internal_result(k));
 
@@ -74,6 +77,9 @@ result_valid <= internal_trigger(TOTAL_LATENCY-1);
 process(clk)
 begin
 if clk'event and clk = '1' then
+	internal_scalar <= scalar;
+	internal_vector <= vector;
+
 	internal_trigger(0) <= trigger;
 	for k in 1 to TOTAL_LATENCY-1 loop
 		internal_trigger(k) <= internal_trigger(k-1);
