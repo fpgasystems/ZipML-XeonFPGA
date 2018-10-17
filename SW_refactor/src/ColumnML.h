@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
 #include <iostream>
 #include <cmath>
 #include <pthread.h>
@@ -32,10 +33,10 @@
 
 using namespace std;
 
-// #define PRINT_TIMING
-#define PRINT_LOSS
+#define PRINT_TIMING
+// #define PRINT_LOSS
 // #define PRINT_ACCURACY
-// #define SGD_SHUFFLE
+#define SGD_SHUFFLE
 // #define SCD_SHUFFLE
 
 #define MAX_NUM_THREADS 14
@@ -188,6 +189,26 @@ public:
 		uint32_t numThreads);
 #endif
 
+	static inline void GetAveragedX (
+		uint32_t numMinibatches,
+		uint32_t numMinibatchesAtATime,
+		ColumnStore* cstore,
+		float* xFinal,
+		float* x)
+	{
+		for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
+			xFinal[j] = 0;
+		}
+		for (uint32_t k = 0; k < numMinibatches/numMinibatchesAtATime; k++) {
+			for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
+				xFinal[j] += x[k*cstore->m_numFeatures + j];
+			}
+		}
+		for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
+			xFinal[j] = xFinal[j]/(numMinibatches/numMinibatchesAtATime);
+		}
+	}
+
 private:
 	inline float getDot(float* x, uint32_t sampleIndex) {
 		float dot = 0.0;
@@ -278,27 +299,6 @@ private:
 			case linreg:
 				updateLinregGradient(gradient, x, sampleIndex);
 				break;
-		}
-	}
-	
-protected:
-	static inline void GetAveragedX (
-		uint32_t numMinibatches,
-		uint32_t numMinibatchesAtATime,
-		ColumnStore* cstore,
-		float* xFinal,
-		float* x)
-	{
-		for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
-			xFinal[j] = 0;
-		}
-		for (uint32_t k = 0; k < numMinibatches/numMinibatchesAtATime; k++) {
-			for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
-				xFinal[j] += x[k*cstore->m_numFeatures + j];
-			}
-		}
-		for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
-			xFinal[j] = xFinal[j]/(numMinibatches/numMinibatchesAtATime);
 		}
 	}
 };

@@ -27,7 +27,7 @@ void MultiCoreSCDPerformance(ColumnML* obj, ModelType type, uint32_t numEpochs, 
 void Convergence(ColumnML* obj, uint32_t numEpochs);
 void StepSizeSweepSGD(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args);
 void StepSizeSweepSCD(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args);
-void SGDvsSCDPerformance(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args);
+void SGDvsSCDPerformance(ColumnML* obj, ModelType type, uint32_t numEpochs, float lambda, AdditionalArguments args);
 void PredictionSCD(
 	ColumnML* obj,
 	uint32_t numEpochs,
@@ -106,7 +106,7 @@ int main(int argc, char* argv[]) {
 
 	// StepSizeSweepSCD(columnML, type, numEpochs, numSamples, lambda, args);
 
-	// SGDvsSCDPerformance(columnML, type, numEpochs, numSamples, lambda, args);
+	SGDvsSCDPerformance(columnML, type, numEpochs, lambda, args);
 	
 	// PredictionSCD(
 	// 	columnML,
@@ -178,19 +178,50 @@ void Convergence(ColumnML* obj, uint32_t numEpochs) {
 	args.m_numSamples = obj->m_cstore->m_numSamples;
 	args.m_constantStepSize = false;
 
-	float lambda = 0.001;
+	float lambda = 0.00001;
 
-	obj->AVXrowwise_SGD(type, nullptr, numEpochs, 1, 0.01, lambda, &args);
+	float* xHistory_rowSGD = new float[numEpochs*obj->m_cstore->m_numFeatures];
+	obj->AVXrowwise_SGD(type, xHistory_rowSGD, numEpochs, 1, 0.01, lambda, &args);
 
-	obj->AVX_SGD(type, nullptr, numEpochs, 8, 0.1, lambda, &args);
+	float* xHistory_SGD8 = new float[numEpochs*obj->m_cstore->m_numFeatures];
+	obj->AVX_SGD(type, xHistory_SGD8, numEpochs, 8, 0.1, lambda, &args);
 
-	obj->AVX_SGD(type, nullptr, numEpochs, 64, 0.5, lambda, &args);
+	float* xHistory_SGD64 = new float[numEpochs*obj->m_cstore->m_numFeatures];
+	obj->AVX_SGD(type, xHistory_SGD64, numEpochs, 64, 0.5, lambda, &args);
 
-	obj->AVX_SGD(type, nullptr, numEpochs, 512, 0.9, lambda, &args);
+	float* xHistory_SGD512 = new float[numEpochs*obj->m_cstore->m_numFeatures];
+	obj->AVX_SGD(type, xHistory_SGD512, numEpochs, 512, 0.9, lambda, &args);
 
-	obj->AVXmulti_SCD(type, true, nullptr, numEpochs, 16384, 4, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args, 14);
+	float* xHistory_SCD = new float[numEpochs*obj->m_cstore->m_numFeatures];
+	obj->AVXmulti_SCD(type, true, xHistory_SCD, numEpochs, 16384, 128, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args, 14);
 
-	obj->AVXmulti_SCD(type, false, nullptr, numEpochs, 16384, 4, lambda, 100, false, false, VALUE_TO_INT_SCALER, &args, 14);
+	float* xHistory_pSCD = new float[numEpochs*obj->m_cstore->m_numFeatures];
+	obj->AVXmulti_SCD(type, false, xHistory_pSCD, numEpochs, 16384, 128, lambda, 10, false, false, VALUE_TO_INT_SCALER, &args, 14);
+
+	cout << "xHistory_rowSGD: " << endl;
+	for (uint32_t e = 0; e < numEpochs; e+=10) {
+		cout << obj->Loss(type, xHistory_rowSGD + e*obj->m_cstore->m_numFeatures, lambda, &args) << endl;
+	}
+	cout << "xHistory_SGD8 loss: " << endl;
+	for (uint32_t e = 0; e < numEpochs; e+=10) {
+		cout << obj->Loss(type, xHistory_SGD8 + e*obj->m_cstore->m_numFeatures, lambda, &args) << endl;
+	}
+	cout << "xHistory_SGD64 loss: " << endl;
+	for (uint32_t e = 0; e < numEpochs; e+=10) {
+		cout << obj->Loss(type, xHistory_SGD64 + e*obj->m_cstore->m_numFeatures, lambda, &args) << endl;
+	}
+	cout << "xHistory_SGD512 loss: " << endl;
+	for (uint32_t e = 0; e < numEpochs; e+=10) {
+		cout << obj->Loss(type, xHistory_SGD512 + e*obj->m_cstore->m_numFeatures, lambda, &args) << endl;
+	}
+	cout << "xHistory_SCD loss: " << endl;
+	for (uint32_t e = 0; e < numEpochs; e+=10) {
+		cout << obj->Loss(type, xHistory_SCD + e*obj->m_cstore->m_numFeatures, lambda, &args) << endl;
+	}
+	cout << "xHistory_pSCD loss: " << endl;
+	for (uint32_t e = 0; e < numEpochs; e+=10) {
+		cout << obj->Loss(type, xHistory_pSCD + e*obj->m_cstore->m_numFeatures, lambda, &args) << endl;
+	}
 }
 
 void StepSizeSweepSGD(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args) {
@@ -211,17 +242,17 @@ void StepSizeSweepSCD(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_
 	}
 }
 
-void SGDvsSCDPerformance(ColumnML* obj, ModelType type, uint32_t numEpochs, uint32_t minibatchSize, float lambda, AdditionalArguments args) {
+void SGDvsSCDPerformance(ColumnML* obj, ModelType type, uint32_t numEpochs, float lambda, AdditionalArguments args) {
 
 	obj->AVXrowwise_SGD(type, nullptr, numEpochs, 1, 0.001, lambda, &args);
 
-	obj->AVX_SGD(type, nullptr, numEpochs, 1, 0.001, lambda, &args);
+	obj->AVX_SGD(type, nullptr, numEpochs, 1, 0.01, lambda, &args);
 
-	obj->AVX_SGD(type, nullptr, numEpochs, 8, 0.01, lambda, &args);
+	obj->AVX_SGD(type, nullptr, numEpochs, 8, 0.1, lambda, &args);
 
-	obj->AVX_SGD(type, nullptr, numEpochs, 64, 0.1, lambda, &args);
+	obj->AVX_SGD(type, nullptr, numEpochs, 64, 0.5, lambda, &args);
 
-	obj->AVX_SGD(type, nullptr, numEpochs, 512, 0.1, lambda, &args);
+	obj->AVX_SGD(type, nullptr, numEpochs, 512, 0.9, lambda, &args);
 
 	obj->AVX_SCD(type, nullptr, numEpochs, obj->m_cstore->m_numSamples - (obj->m_cstore->m_numSamples%8), 4, lambda, 10000, false, false, VALUE_TO_INT_SCALER, &args);
 

@@ -191,7 +191,7 @@ void ColumnML::SGD(
 		for (uint32_t k = 0; k < numMinibatches; k++) {
 #ifdef SGD_SHUFFLE
 			uint32_t rand = 0;
-			_rdseed32_step(&rand);
+			_rdrand32_step(&rand);
 			uint32_t m = numMinibatches*((float)(rand-1)/(float)UINT_MAX);
 #else
 			uint32_t m = k;
@@ -276,7 +276,7 @@ void ColumnML::AVX_SGD(
 		for (uint32_t k = 0; k < numMinibatches; k++) {
 #ifdef SGD_SHUFFLE
 			uint32_t rand = 0;
-			_rdseed32_step(&rand);
+			_rdrand32_step(&rand);
 			uint32_t m = numMinibatches*((float)(rand-1)/(float)UINT_MAX);
 #else
 			uint32_t m = k;
@@ -419,7 +419,7 @@ void ColumnML::AVXrowwise_SGD(
 		for (uint32_t k = 0; k < args->m_numSamples; k++) {
 #ifdef SGD_SHUFFLE
 			uint32_t rand = 0;
-			_rdseed32_step(&rand);
+			_rdrand32_step(&rand);
 			uint32_t m = args->m_numSamples*((float)(rand-1)/(float)UINT_MAX);
 #else
 			uint32_t m = k;
@@ -889,7 +889,7 @@ void ColumnML::AVX_SCD(
 
 #ifdef SCD_SHUFFLE
 				uint32_t rand = 0;
-				_rdseed32_step(&rand);
+				_rdrand32_step(&rand);
 				uint32_t coordinate = (m_cstore->m_numFeatures-1)*((float)(rand-1)/(float)UINT_MAX);
 #else
 				uint32_t coordinate = j;
@@ -1122,7 +1122,7 @@ void* batchThread(void* args) {
 					for (uint32_t j = 0; j < cstore->m_numFeatures; j++) {
 #ifdef SCD_SHUFFLE
 						uint32_t rand = 0;
-						_rdseed32_step(&rand);
+						_rdrand32_step(&rand);
 						uint32_t coordinate = (cstore->m_numFeatures-1)*((float)(rand-1)/(float)UINT_MAX);
 #else
 						uint32_t coordinate = j;
@@ -1160,7 +1160,7 @@ void* batchThread(void* args) {
 #endif
 				}
 				else {
-					GetAveragedX(r->m_numMinibatches, 1, cstore, r->m_xFinal, r->m_x);
+					ColumnML::GetAveragedX(r->m_numMinibatches, 1, cstore, r->m_xFinal, r->m_x);
 					end = get_time();
 					epochTimes += (end-start);
 #ifdef PRINT_TIMING
