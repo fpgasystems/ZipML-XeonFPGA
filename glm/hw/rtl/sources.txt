@@ -1,0 +1,7 @@
+glm_cci.json
+
+C:../../../base/hw/rtl/base_sources.txt
+
++incdir+.
+hash32.sv
+glm_top.sv
