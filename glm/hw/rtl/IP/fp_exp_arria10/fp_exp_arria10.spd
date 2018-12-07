@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<simPackage>
+ <file
+   path="altera_fp_functions_160/sim/fp_exp_arria10_altera_fp_functions_160_lvppkfy_floatTable_eA_uid100_fpExpETest_lutmem.hex"
+   type="HEX"
+   library="altera_fp_functions_160" />
+ <file
+   path="altera_fp_functions_160/sim/fp_exp_arria10_altera_fp_functions_160_lvppkfy_floatTable_kPPreZLow_uid67_fpExpETest_lutmem.hex"
+   type="HEX"
+   library="altera_fp_functions_160" />
+ <file
+   path="altera_fp_functions_160/sim/fp_exp_arria10_altera_fp_functions_160_lvppkfy_floatTable_kPPreZHigh_uid63_fpExpETest_lutmem.hex"
+   type="HEX"
+   library="altera_fp_functions_160" />
+ <file
+   path="altera_fp_functions_160/sim/dspba_library_package.vhd"
+   type="VHDL"
+   library="altera_fp_functions_160" />
+ <file
+   path="altera_fp_functions_160/sim/dspba_library.vhd"
+   type="VHDL"
+   library="altera_fp_functions_160" />
+ <file
+   path="altera_fp_functions_160/sim/fp_exp_arria10_altera_fp_functions_160_lvppkfy.vhd"
+   type="VHDL"
+   library="altera_fp_functions_160" />
+ <file
+   path="sim/fp_exp_arria10.v"
+   type="VERILOG"
+   hasInlineConfiguration="true" />
+ <topLevel name="fp_exp_arria10" />
+ <deviceFamily name="arria10" />
+</simPackage>

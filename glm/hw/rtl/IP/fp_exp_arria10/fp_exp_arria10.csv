@@ -1,0 +1,23 @@
+# system info fp_exp_arria10 on 2018.10.09.10:15:35
+system_info:
+name,value
+DEVICE,10AS016C3U19E2LG
+DEVICE_FAMILY,Arria 10
+GENERATION_ID,1539072934
+#
+#
+# Files generated for fp_exp_arria10 on 2018.10.09.10:15:35
+files:
+filepath,kind,attributes,module,is_top
+sim/fp_exp_arria10.v,VERILOG,CONTAINS_INLINE_CONFIGURATION,fp_exp_arria10,true
+altera_fp_functions_160/sim/fp_exp_arria10_altera_fp_functions_160_lvppkfy_floatTable_eA_uid100_fpExpETest_lutmem.hex,HEX,,fp_exp_arria10_altera_fp_functions_160_lvppkfy,false
+altera_fp_functions_160/sim/fp_exp_arria10_altera_fp_functions_160_lvppkfy_floatTable_kPPreZLow_uid67_fpExpETest_lutmem.hex,HEX,,fp_exp_arria10_altera_fp_functions_160_lvppkfy,false
+altera_fp_functions_160/sim/fp_exp_arria10_altera_fp_functions_160_lvppkfy_floatTable_kPPreZHigh_uid63_fpExpETest_lutmem.hex,HEX,,fp_exp_arria10_altera_fp_functions_160_lvppkfy,false
+altera_fp_functions_160/sim/dspba_library_package.vhd,VHDL,,fp_exp_arria10_altera_fp_functions_160_lvppkfy,false
+altera_fp_functions_160/sim/dspba_library.vhd,VHDL,,fp_exp_arria10_altera_fp_functions_160_lvppkfy,false
+altera_fp_functions_160/sim/fp_exp_arria10_altera_fp_functions_160_lvppkfy.vhd,VHDL,,fp_exp_arria10_altera_fp_functions_160_lvppkfy,false
+#
+# Map from instance-path to kind of module
+instances:
+instancePath,module
+fp_exp_arria10.fp_functions_0,fp_exp_arria10_altera_fp_functions_160_lvppkfy

@@ -1,16 +1,7 @@
 # ZipML on Xeon+FPGA
 
-See [wiki](https://github.com/fpgasystems/ZipML_SGD/wiki)
-
-## Citation
-
-If you find ZipML-PYNQ useful, please consider citing ZipML papers:
-
-@inproceedings{kara2017fpga,
-  title={FPGA-accelerated Dense Linear Machine Learning: A Precision-Convergence Trade-off},
-  author={Kara, Kaan and Alistarh, Dan and Alonso, Gustavo and Mutlu, Onur and Zhang, Ce},
-  booktitle={Field-Programmable Custom Computing Machines (FCCM), 2017 IEEE 25th Annual International Symposium on},
-  pages={160--167},
-  year={2017},
-  organization={IEEE}
-}
+- Setup simulation:
+$ cd glm
+$ ./hw/sim/setup_ase build_sim
+> In Makefile in build_sim: MENT_VSIM_OPT+= -l run.log -dpioutoftheblue 1 -novopt
+> In ase.cfg change to ASE_MODE = 1 for continuous simulation

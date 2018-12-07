@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<simPackage>
+ <file
+   path="altera_fp_functions_160/sim/dspba_library_package.vhd"
+   type="VHDL"
+   library="altera_fp_functions_160" />
+ <file
+   path="altera_fp_functions_160/sim/dspba_library.vhd"
+   type="VHDL"
+   library="altera_fp_functions_160" />
+ <file
+   path="altera_fp_functions_160/sim/fp_exp_arria10_nohard_altera_fp_functions_160_724m2py.vhd"
+   type="VHDL"
+   library="altera_fp_functions_160" />
+ <file
+   path="sim/fp_exp_arria10_nohard.v"
+   type="VERILOG"
+   hasInlineConfiguration="true" />
+ <topLevel name="fp_exp_arria10_nohard" />
+ <deviceFamily name="arria10" />
+</simPackage>

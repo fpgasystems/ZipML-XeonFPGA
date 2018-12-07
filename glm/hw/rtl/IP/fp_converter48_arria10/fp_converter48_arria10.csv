@@ -1,0 +1,20 @@
+# system info fp_converter48_arria10 on 2018.02.26.12:27:46
+system_info:
+name,value
+DEVICE,10AS016C3U19E2LG
+DEVICE_FAMILY,Arria 10
+GENERATION_ID,1519644466
+#
+#
+# Files generated for fp_converter48_arria10 on 2018.02.26.12:27:46
+files:
+filepath,kind,attributes,module,is_top
+sim/fp_converter48_arria10.v,VERILOG,CONTAINS_INLINE_CONFIGURATION,fp_converter48_arria10,true
+altera_fp_functions_160/sim/dspba_library_package.vhd,VHDL,,fp_converter48_arria10_altera_fp_functions_160_wj3vhma,false
+altera_fp_functions_160/sim/dspba_library.vhd,VHDL,,fp_converter48_arria10_altera_fp_functions_160_wj3vhma,false
+altera_fp_functions_160/sim/fp_converter48_arria10_altera_fp_functions_160_wj3vhma.vhd,VHDL,,fp_converter48_arria10_altera_fp_functions_160_wj3vhma,false
+#
+# Map from instance-path to kind of module
+instances:
+instancePath,module
+fp_converter48_arria10.fp_functions_0,fp_converter48_arria10_altera_fp_functions_160_wj3vhma
