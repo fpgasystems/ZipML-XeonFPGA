@@ -383,7 +383,8 @@ module glm
         .m_axis_tvalid(model_forward_fifo_access.read.re_tvalid),
         .m_axis_tready(model_forward_fifo_access.read.re_tready),
         .m_axis_tdata(model_forward_fifo_access.read.re_tdata),
-        .almostfull(model_forward_fifo_access.status.almostfull)
+        .almostfull(model_forward_fifo_access.status.almostfull),
+        .count(model_forward_fifo_access.status.count[LOG2_PREFETCH_SIZE-1:0])
     );
 
     wordfifo_access dot_fifo_access;
@@ -401,7 +402,8 @@ module glm
         .m_axis_tvalid(dot_fifo_access.read.re_tvalid),
         .m_axis_tready(dot_fifo_access.read.re_tready),
         .m_axis_tdata(dot_fifo_access.read.re_tdata),
-        .almostfull(dot_fifo_access.status.almostfull)
+        .almostfull(dot_fifo_access.status.almostfull),
+        .count(dot_fifo_access.status.count[LOG2_PREFETCH_SIZE-1:0])
     );
 
     bram_write execute_load_memory1_write;
@@ -438,6 +440,11 @@ module glm
                 result = regs + 1;
             end
 
+            32'h01FFFFFF:
+            begin
+                result = regs - 1;
+            end
+
             default:
             begin
                 result = instruction;
@@ -455,6 +462,8 @@ module glm
     //      reg[0,1,2] = reg[0,1,2]
     //  else if instruction[0,1,2] == 0xFFFFFFF
     //      reg[0,1,2] = reg[0,1,2]+1
+    //  else if instruction[0,1,2] == 0x1FFFFFF
+    //      reg[0,1,2] = reg[0,1,2]-1
     //  else
     //      reg[0,1,2] = instruction[0,1,2]
 
@@ -501,6 +510,12 @@ module glm
     // reg[6] = instruction[6]                                                  // [0] (0 memory1) (1 memory2)
                                                                                 // [1] DRAM buffer (0 out) (1 in)
 
+    // if opcode == 5 ---- prefetch
+    // reg[3] = instruction[3]+reg[1]*instruction[11]+reg[0]*instruction[10]    // DRAM read offset in cachelines
+                                                                                // instruction[10]: read offset change per update
+                                                                                // instruction[11]: read offset change per partiton (partition size)
+    // reg[4] = instruction[4]                                                  // DRAM read length in cachelines
+
     // if opcode == 10 ---- jump0
     //  if reg[0] == instruction[12]:
     //      programCounter = instruction[13]
@@ -529,8 +544,8 @@ module glm
     
     logic [31:0] dot_reg;
 
-    logic [4:0] op_start;
-    logic [4:0] op_done;
+    logic [5:0] op_start;
+    logic [5:0] op_done;
 
     always_ff @(posedge clk)
     begin
@@ -538,13 +553,13 @@ module glm
         begin
             program_counter <= 32'h0;
             machine_state <= MACHINE_STATE_IDLE;
-            op_start <= 5'b0;
+            op_start <= 6'b0;
             opcode <= 8'b0;
             nonblocking <= 1'b0;
         end
         else
         begin
-            op_start <= 5'b0;
+            op_start <= 6'b0;
 
             case(machine_state)
                 MACHINE_STATE_IDLE:
@@ -616,6 +631,14 @@ module glm
                             regs[4] <= instruction[4];
                             regs[5] <= instruction[5];
                             regs[6] <= instruction[6];
+                            program_counter <= program_counter + 1;
+                        end
+
+                        8'h5: // prefetch
+                        begin
+                            op_start[5] <= 1'b1;
+                            regs[3] <= instruction[3] + regs[1]*instruction[11] + regs[0]*instruction[10];
+                            regs[4] <= instruction[4];
                             program_counter <= program_counter + 1;
                         end
 
@@ -709,6 +732,29 @@ module glm
         end
     end
 
+    logic execute_afterprefetch_c0TxAlmFull;
+    t_if_ccip_c0_Rx execute_afterprefetch_cp2af_sRx_c0;
+    t_if_ccip_c0_Tx execute_afterprefetch_af2cp_sTx_c0;
+    logic op_request_done;
+
+    execute_prefetch
+    app_execute_prefetch
+    (
+        .clk,
+        .reset,
+        .op_start(op_start[5]),
+        .op_done(op_done[5]),
+        .regs0(regs[3]),
+        .regs1(regs[4]),
+        .in_addr,
+        .c0TxAlmFull(execute_load_c0TxAlmFull),
+        .cp2af_sRx_c0(execute_load_cp2af_sRx_c0),
+        .af2cp_sTx_c0(execute_load_af2cp_sTx_c0),
+        .get_c0TxAlmFull(execute_afterprefetch_c0TxAlmFull),
+        .get_cp2af_sRx_c0(execute_afterprefetch_cp2af_sRx_c0),
+        .get_af2cp_sTx_c0(execute_afterprefetch_af2cp_sTx_c0)
+    );
+
     execute_load
     app_execute_load
     (
@@ -716,6 +762,7 @@ module glm
         .reset,
         .op_start(op_start[0]),
         .op_done(op_done[0]),
+        .op_request_done(op_request_done),
         .regs,
         .in_addr,
         .samples_fifo_status(samples_fifo_access.status),
@@ -724,9 +771,9 @@ module glm
         .prefetch_fifo_write(prefetch_fifo_access.write),
         .memory1_write(execute_load_memory1_write),
         .memory2_write(execute_load_memory2_write),
-        .c0TxAlmFull(execute_load_c0TxAlmFull),
-        .cp2af_sRx_c0(execute_load_cp2af_sRx_c0),
-        .af2cp_sTx_c0(execute_load_af2cp_sTx_c0)
+        .c0TxAlmFull(execute_afterprefetch_c0TxAlmFull),
+        .cp2af_sRx_c0(execute_afterprefetch_cp2af_sRx_c0),
+        .af2cp_sTx_c0(execute_afterprefetch_af2cp_sTx_c0)
     );
 
     execute_dot

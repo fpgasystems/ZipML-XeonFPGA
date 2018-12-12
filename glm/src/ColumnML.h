@@ -213,6 +213,8 @@ private:
 	inline float getDot(float* x, uint32_t sampleIndex) {
 		float dot = 0.0;
 		for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
+			// cout << "x[" << j << "]: " << x[j] << endl;
+			// cout << "m_samples[" << j << "]: " << m_cstore->m_samples[j][sampleIndex] << endl;
 			dot += x[j]*m_cstore->m_samples[j][sampleIndex];
 		}
 		return dot;
@@ -281,9 +283,7 @@ private:
 
 	void updateLinregGradient(float* gradient, float* x, uint32_t sampleIndex) {
 		float dot = getDot(x, sampleIndex);
-
-		cout << sampleIndex << " dot: " << dot << endl;
-
+		// cout << sampleIndex << " dot: " << dot << endl;
 		dot -= m_cstore->m_labels[sampleIndex];
 		for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
 			gradient[j] += dot*m_cstore->m_samples[j][sampleIndex];

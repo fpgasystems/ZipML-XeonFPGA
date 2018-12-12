@@ -36,6 +36,8 @@ using namespace opae::fpga::bbb::mpf::types;
 
 #include "ColumnML.h"
 
+#define FPGA_MEMORY_SIZE_IN_CL 1024
+
 class Instruction {
 public:
 	static const uint32_t NUM_WORDS = 16;
@@ -68,12 +70,24 @@ public:
 		m_data[0] = 0xFFFFFFF;
 	}
 
+	void DecrementUpdateIndex() {
+		m_data[0] = 0x1FFFFFF;
+	}
+
 	void IncrementPartitionIndex() {
 		m_data[1] = 0xFFFFFFF;
 	}
 
+	void DecrementPartitionIndex() {
+		m_data[1] = 0x1FFFFFF;
+	}
+
 	void IncrementEpochIndex() {
 		m_data[2] = 0xFFFFFFF;
+	}
+
+	void DecrementEpochIndex() {
+		m_data[2] = 0x1FFFFFF;
 	}
 
 	void MakeNonBlocking() {
@@ -114,7 +128,7 @@ public:
 		m_data[11] = offsetByPartition;
 	}
 
-	void LoadToPrefetch(
+	void LoadSamples(
 		uint32_t loadOffsetDRAM,
 		uint32_t loadLengthDRAM,
 		uint32_t offsetByUpdate,
@@ -128,6 +142,20 @@ public:
 		m_data[7] = (loadLengthDRAM << 16) | (loadLengthDRAM & 0xFFFF);
 		m_data[10] = offsetByUpdate;
 		m_data[11] = offsetByPartition;
+	}
+
+	void Prefetch(
+		uint32_t loadOffsetDRAM,
+		uint32_t loadLengthDRAM,
+		uint32_t offsetByUpdate,
+		uint32_t offsetByPartition)
+	{
+		m_data[15] = 5;
+		m_data[3] = loadOffsetDRAM;
+		m_data[4] = loadLengthDRAM;
+		m_data[10] = offsetByUpdate;
+		m_data[11] = offsetByPartition;
+		MakeNonBlocking();
 	}
 
 	void WriteBack(
@@ -326,7 +354,6 @@ public:
 	OPAE_SVC_WRAPPER* m_fpga;
 	CSR_MGR* m_csrs;
 
-
 	FPGA_ColumnML(const char* accel_uuid) {
 		m_fpga = new OPAE_SVC_WRAPPER(accel_uuid);
 		assert(m_fpga->isOk());
@@ -477,7 +504,7 @@ public:
 			return;
 		}
 
-		const uint32_t numInstructions = 14;
+		const uint32_t numInstructions = 15;
 		Instruction inst[numInstructions];
 
 		uint32_t modelOffsetInMemory1 = 0;
@@ -502,45 +529,51 @@ public:
 			0,
 			m_partitionSizeInCL);
 
-		inst[2].LoadToPrefetch(
+		inst[2].Prefetch(
+			m_samplesChunk.m_offsetInCL,
+			m_cstore->m_numSamples*m_numFeaturesInCL,
+			0,
+			0);
+
+		inst[3].LoadSamples(
 			m_samplesChunk.m_offsetInCL,
 			m_numFeaturesInCL,
 			m_numFeaturesInCL,
 			m_numFeaturesInCL*m_partitionSize);
-		inst[2].MakeNonBlocking();
+		inst[3].MakeNonBlocking();
 
-		inst[3].Dot(
+		inst[4].Dot(
 			m_numFeaturesInCL,
 			true,
 			false,
 			modelOffsetInMemory1,
 			0);
-		
+
 		// Innermost loop
-		inst[4].Modify(
+		inst[5].Modify(
 			labelOffsetInMemory2,
 			0xFFFF,
 			type,
 			0,
 			stepSize,
 			lambda);
-		inst[4].IncrementUpdateIndex();
-		inst[4].MakeNonBlocking();
+		inst[5].IncrementUpdateIndex();
+		inst[5].MakeNonBlocking();
 
-		inst[5].Update(
+		inst[6].Update(
 			modelOffsetInMemory1,
 			m_numFeaturesInCL,
 			true);
-		inst[5].MakeNonBlocking();
+		inst[6].MakeNonBlocking();
 
-		inst[6].LoadToPrefetch(
+		inst[7].LoadSamples(
 			m_samplesChunk.m_offsetInCL,
 			m_numFeaturesInCL,
 			m_numFeaturesInCL,
 			m_numFeaturesInCL*m_partitionSize);
-		inst[6].MakeNonBlocking();
+		inst[7].MakeNonBlocking();
 
-		inst[7].Dot(
+		inst[8].Dot(
 			m_numFeaturesInCL,
 			true,
 			true,
@@ -548,9 +581,9 @@ public:
 			0);
 
 		// End of samples
-		inst[8].Jump0(m_partitionSize-1, 4, 9);
+		inst[9].Jump0(m_partitionSize-1, 5, 10);
 
-		inst[9].Modify(
+		inst[10].Modify(
 			labelOffsetInMemory2,
 			0xFFFF,
 			type,
@@ -558,16 +591,16 @@ public:
 			stepSize,
 			lambda);
 
-		inst[10].Update(
+		inst[11].Update(
 			modelOffsetInMemory1,
 			m_numFeaturesInCL,
 			false);
-		inst[10].ResetUpdateIndex();
-		inst[10].IncrementPartitionIndex();
+		inst[11].ResetUpdateIndex();
+		inst[11].IncrementPartitionIndex();
 
-		inst[11].Jump1(m_numPartitions, 1, 12);
+		inst[12].Jump1(m_numPartitions, 1, 13);
 
-		inst[12].WriteBack(
+		inst[13].WriteBack(
 			1,
 			m_numFeaturesInCL,
 			modelOffsetInMemory1,
@@ -575,12 +608,12 @@ public:
 			0,
 			0,
 			m_numFeaturesInCL);
-		inst[12].IncrementEpochIndex();
+		inst[13].IncrementEpochIndex();
 
 		// End of epochs
-		inst[13].Jump2(numEpochs, 1, 0xFFFFFFFF);
-		inst[13].ResetUpdateIndex();
-		inst[13].ResetPartitionIndex();
+		inst[14].Jump2(numEpochs, 1, 0xFFFFFFFF);
+		inst[14].ResetUpdateIndex();
+		inst[14].ResetPartitionIndex();
 
 		std::vector<Instruction> instructions;
 		for (uint32_t i = 0; i < numInstructions; i++) {
@@ -789,49 +822,54 @@ public:
 	}
 */
 
-	void TestProgram() {
+	void TestBandwidth(uint32_t numLines) {
 
-		const uint32_t numInstructions = 5;
-		Instruction inst[numInstructions];
+		auto inputHandle = m_fpga->allocBuffer(numLines*64);
+		auto input = reinterpret_cast<volatile float*>(inputHandle->c_type());
+		assert(NULL != input);
 
-		inst[0].JustLoad1(
-			m_modelChunk.m_offsetInCL,
-			m_modelChunk.m_lenghtInCL,
+		auto outputHandle = m_fpga->allocBuffer(numLines*64);
+		auto output = reinterpret_cast<volatile float*>(outputHandle->c_type());
+		assert(NULL != output);
+
+		uint32_t numIterations = numLines/FPGA_MEMORY_SIZE_IN_CL + (numLines%FPGA_MEMORY_SIZE_IN_CL > 0);
+		cout << "numIterations : " << numIterations << endl;
+
+
+		std::vector<Instruction> readOnlyInstructions;
+
+		Instruction resetInst;
+		resetInst.ResetUpdateIndex();
+		resetInst.ResetPartitionIndex();
+		resetInst.ResetEpochIndex();
+
+		Instruction loadInst;
+		loadInst.JustLoad1(
+			0,
+			(numIterations == 1) ? 0 : FPGA_MEMORY_SIZE_IN_CL,
 			0,
 			0,
-			0);
-		inst[0].ResetUpdateIndex();
-		inst[0].ResetPartitionIndex();
-		inst[0].ResetEpochIndex();
+			FPGA_MEMORY_SIZE_IN_CL);
+		loadInst.IncreasePartitionIndex();
 
-		inst[1].LoadToPrefetch(
-			m_samplesChunk.m_offsetInCL,
-			m_numFeaturesInCL,
-			0,
-			0);
-		inst[1].MakeNonBlocking();
+		Instruction jumpInst;
+		jumpInst.Jump1(numIterations-1, 1, 3);
 
-		inst[2].Dot(
-			m_numFeaturesInCL,
-			true,
-			false,
+		Instruction finalInst;
+		finalInst.JustLoad1(
 			0,
-			0);
-
-		inst[3].Modify(
-			0,
-			0xFFFF,
+			numLines%FPGA_MEMORY_SIZE_IN_CL,
 			0,
 			0,
-			0.1,
-			0.1);
+			FPGA_MEMORY_SIZE_IN_CL);
 
-		inst[4].Jump0(0, 0, 0xFFFFFFFF);
+		Instruction exitInst;
+		exitInst.Jump2(0, 1, 0xFFFFFFFF);
 
-		std::vector<Instruction> instructions;
-		for (uint32_t i = 0; i < numInstructions; i++) {
-			instructions.push_back(inst[i]);
-		}
+		readOnlyInstructions.push_back(resetInst);
+		readOnlyInstructions.push_back(loadInst);
+		readOnlyInstructions.push_back(jumpInst);
+
 
 		// Copy program to FPGA memory
 		auto programMemoryHandle = m_fpga->allocBuffer(instructions.size()*64);
@@ -841,11 +879,6 @@ public:
 			i.Copy(programMemory + k*Instruction::NUM_WORDS);
 			k++;
 		}
-
-		auto outputHandle = m_fpga->allocBuffer(getpagesize());
-		auto output = reinterpret_cast<volatile float*>(outputHandle->c_type());
-		assert(NULL != output);
-
 
 		m_csrs->writeCSR(0, intptr_t(m_memory));
 		m_csrs->writeCSR(1, intptr_t(output));

@@ -10,6 +10,7 @@ execute_writeback.sv
 execute_dot.sv
 execute_modify.sv
 execute_update.sv
+execute_prefetch.sv
 
 memory/dual_port_ram.vhd
 memory/normal2axis_fifo.vhd

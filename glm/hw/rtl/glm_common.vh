@@ -8,6 +8,66 @@ parameter REGS_WIDTH = 32*NUM_REGS;
 parameter LOG2_PREFETCH_SIZE = 8;
 parameter PREFETCH_SIZE = 2**LOG2_PREFETCH_SIZE - 16;
 
+interface bram_interface
+#(
+    parameter WIDTH = 32,
+    parameter LOG2_DEPTH = 5
+)
+(
+    input clk
+);
+    // Write
+    logic                   we;
+    logic [LOG2_DEPTH-1:0]  waddr;
+    logic [WIDTH-1:0]       wdata;
+
+    // Request
+    logic                   re;
+    logic [LOG2_DEPTH-1:0]  raddr;
+
+    // Read
+    logic [WIDTH-1:0]       rdata;
+    logic                   rvalid;
+
+    modport in(
+        input we,
+        input waddr,
+        input wdata,
+        input re,
+        input raddr,
+        output rdata,
+        output rvalid);
+endinterface
+
+interface fifo_interface
+#(
+    parameter WIDTH = 32,
+    parameter LOG2_DEPTH = 5
+)
+();
+    // Write
+    logic                   we;
+    logic [WIDTH-1:0]       wdata;
+
+    // Read
+    logic [WIDTH-1:0]       re_tdata;
+    logic                   re_tvalid;
+    logic                   re_tready;
+
+    // Status
+    logic almostfull;
+    logic[LOG2_DEPTH-1:0] count;
+
+    modport in(
+        input we,
+        input wdata,
+        output re_tdata,
+        output re_tvalid,
+        input re_tready,
+        output almostfull,
+        output count);
+endinterface
+
 // =================================
 //
 //   BRAM
@@ -35,6 +95,34 @@ typedef struct packed {
 	bram_request request;
 	bram_read read;
 } bram_access;
+
+// =================================
+//
+//   WORDBRAM
+//
+// =================================
+
+typedef struct packed {
+    logic[LOG2_PREFETCH_SIZE-1:0] waddr;
+    logic[31:0] wdata;
+    logic we;
+} wordbram_write;
+
+typedef struct packed {
+    logic[LOG2_PREFETCH_SIZE-1:0] raddr;
+    logic re;
+} wordbram_request;
+
+typedef struct packed {
+    logic[31:0] rdata;
+    logic valid;
+} wordbram_read;
+
+typedef struct packed {
+    bram_write write;
+    bram_request request;
+    bram_read read;
+} wordbram_access;
 
 // =================================
 //
@@ -72,6 +160,7 @@ typedef struct packed {
 
 typedef struct packed {
     logic almostfull;
+    logic[15:0] count;
 } wordfifo_status;
 
 typedef struct packed {

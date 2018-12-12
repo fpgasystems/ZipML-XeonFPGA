@@ -8,6 +8,7 @@ module execute_load
 
     input  logic op_start,
     output logic op_done,
+    output logic op_request_done,
 
     input logic [31:0] regs [NUM_REGS],
     input t_ccip_clAddr in_addr,
@@ -48,7 +49,6 @@ module execute_load
     bram_access_properties memory1_store;
     bram_access_properties memory2_store;
 
-
     t_cci_c0_ReqMemHdr rd_hdr;
     always_comb
     begin
@@ -85,15 +85,17 @@ module execute_load
             samples_fifo_write.we <= 1'b0;
             prefetch_fifo_write.we <= 1'b0;
             op_done <= 1'b0;
+            op_request_done <= 1'b0;
         end
         else
         begin
+            af2cp_sTx_c0.valid <= 1'b0;
+            op_request_done <= 1'b0;
             // =================================
             //
             //   Request State Machine
             //
             // =================================
-            af2cp_sTx_c0.valid <= 1'b0;
             case (request_state)
                 STATE_IDLE:
                 begin
@@ -134,6 +136,7 @@ module execute_load
 
                 STATE_DONE:
                 begin
+                    op_request_done <= 1'b1;
                     request_state <= STATE_IDLE;
                 end
             endcase

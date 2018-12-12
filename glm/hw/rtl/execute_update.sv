@@ -82,6 +82,7 @@ module execute_update
     logic [15:0] memory1_access_length;
     logic write_to_model_forward;
 
+    logic [15:0] num_lines_multiplied_requested;
     logic [15:0] num_lines_multiplied;
     logic [15:0] num_lines_subtracted;
 
@@ -96,6 +97,7 @@ module execute_update
         if (reset)
         begin
             update_state <= STATE_IDLE;
+            num_lines_multiplied_requested <= 16'b0;
             num_lines_multiplied <= 16'b0;
             num_lines_subtracted <= 16'b0;
             subtract_trigger <= 1'b0;
@@ -120,6 +122,7 @@ module execute_update
             case(update_state)
                 STATE_IDLE:
                 begin
+                    num_lines_multiplied_requested <= 16'b0;
                     num_lines_multiplied <= 16'b0;
                     num_lines_subtracted <= 16'b0;
                     if (op_start)
@@ -143,9 +146,10 @@ module execute_update
 
                 STATE_MAIN:
                 begin
-                    if ( (num_lines_multiplied < memory1_access_length) && samples_fifo_tvalid)
+                    if ( (num_lines_multiplied_requested < memory1_access_length) && samples_fifo_tvalid)
                     begin
                         samples_fifo_tready <= 1'b1;
+                        num_lines_multiplied_requested <= num_lines_multiplied_requested + 1;
                     end
 
                     if (samples_fifo_tvalid && samples_fifo_tready)
