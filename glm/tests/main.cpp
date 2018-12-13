@@ -98,12 +98,12 @@ int main(int argc, char* argv[]) {
 	args.m_constantStepSize = true;
 
 
-	// columnML.CopyDataToFPGAMemory(FormatSGD, 16384);
-	// columnML.TestProgram();
+	
+	columnML.TestBandwidth(1050);
 
-	columnML.SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
-	columnML.CopyDataToFPGAMemory(FormatSGD, 16384);
-	columnML.fSGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
+	// columnML.SGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
+	// columnML.CopyDataToFPGAMemory(FormatSGD, 16384);
+	// columnML.fSGD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, &args);
 
 	// columnML.SCD(type, nullptr, numEpochs, minibatchSize, stepSize, lambda, 1, 1000, false, false, VALUE_TO_INT_SCALER, &args);
 	// columnML.CopyDataToFPGAMemory(FormatSCD, minibatchSize);

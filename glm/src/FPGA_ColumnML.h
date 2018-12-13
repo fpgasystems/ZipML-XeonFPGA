@@ -54,6 +54,18 @@ public:
 		m_data[2] = 0xFFFFFFFF;
 	}
 
+	void SetUpdateIndex(uint32_t i) {
+		m_data[0] = i;
+	}
+
+	void SetPartitionIndex(uint32_t i) {
+		m_data[1] = i;
+	}
+
+	void SetEpochIndex(uint32_t i) {
+		m_data[2] = i;
+	}
+
 	void ResetUpdateIndex() {
 		m_data[0] = 0;
 	}
@@ -828,32 +840,49 @@ public:
 		auto input = reinterpret_cast<volatile float*>(inputHandle->c_type());
 		assert(NULL != input);
 
+		for (uint32_t i = 0; i < numLines*16; i++) {
+			input[i] = i;
+		}
+
 		auto outputHandle = m_fpga->allocBuffer(numLines*64);
 		auto output = reinterpret_cast<volatile float*>(outputHandle->c_type());
 		assert(NULL != output);
+
+		for (uint32_t i = 0; i < numLines*16; i++) {
+			output[i] = 0;
+		}
 
 		uint32_t numIterations = numLines/FPGA_MEMORY_SIZE_IN_CL + (numLines%FPGA_MEMORY_SIZE_IN_CL > 0);
 		cout << "numIterations : " << numIterations << endl;
 
 
-		std::vector<Instruction> readOnlyInstructions;
-
 		Instruction resetInst;
 		resetInst.ResetUpdateIndex();
-		resetInst.ResetPartitionIndex();
+		resetInst.SetPartitionIndex(numIterations);
 		resetInst.ResetEpochIndex();
+
+		Instruction prefetchInst;
+		prefetchInst.Prefetch(
+			0,
+			numLines,
+			0,
+			0);
+
+		Instruction jumpInst0;
+		jumpInst0.Jump1(1, 3, 5);
+		jumpInst0.ResetPartitionIndex();
 
 		Instruction loadInst;
 		loadInst.JustLoad1(
 			0,
-			(numIterations == 1) ? 0 : FPGA_MEMORY_SIZE_IN_CL,
+			FPGA_MEMORY_SIZE_IN_CL,
 			0,
 			0,
 			FPGA_MEMORY_SIZE_IN_CL);
-		loadInst.IncreasePartitionIndex();
+		loadInst.IncrementPartitionIndex();
 
 		Instruction jumpInst;
-		jumpInst.Jump1(numIterations-1, 1, 3);
+		jumpInst.Jump1(numIterations-1, 3, 5);
 
 		Instruction finalInst;
 		finalInst.JustLoad1(
@@ -866,31 +895,35 @@ public:
 		Instruction exitInst;
 		exitInst.Jump2(0, 1, 0xFFFFFFFF);
 
+
+		std::vector<Instruction> readOnlyInstructions;
 		readOnlyInstructions.push_back(resetInst);
+		readOnlyInstructions.push_back(prefetchInst);
+		readOnlyInstructions.push_back(jumpInst0);
 		readOnlyInstructions.push_back(loadInst);
 		readOnlyInstructions.push_back(jumpInst);
-
+		readOnlyInstructions.push_back(finalInst);
+		readOnlyInstructions.push_back(exitInst);
 
 		// Copy program to FPGA memory
-		auto programMemoryHandle = m_fpga->allocBuffer(instructions.size()*64);
+		auto programMemoryHandle = m_fpga->allocBuffer(readOnlyInstructions.size()*64);
 		auto programMemory = reinterpret_cast<volatile uint32_t*>(programMemoryHandle->c_type());
 		uint32_t k = 0;
-		for (Instruction i: instructions) {
+		for (Instruction i: readOnlyInstructions) {
 			i.Copy(programMemory + k*Instruction::NUM_WORDS);
 			k++;
 		}
 
-		m_csrs->writeCSR(0, intptr_t(m_memory));
+		m_csrs->writeCSR(0, intptr_t(input));
 		m_csrs->writeCSR(1, intptr_t(output));
 		m_csrs->writeCSR(2, intptr_t(programMemory));
-		m_csrs->writeCSR(3, (uint64_t)instructions.size());
+		m_csrs->writeCSR(3, (uint64_t)readOnlyInstructions.size());
 
 		// Spin, waiting for the value in memory to change to something non-zero.
 		struct timespec pause;
 		// Longer when simulating
 		pause.tv_sec = (m_fpga->hwIsSimulated() ? 1 : 0);
 		pause.tv_nsec = 2500000;
-
 
 		output[0] = 0;
 		while (0 == output[0]) {

@@ -21,7 +21,23 @@ module glm
     input  logic c1NotEmpty
 );
 
-    logic [511:0] memory_program [PROGRAM_SIZE];
+    bram_interface #(.WIDTH(512), .LOG2_DEPTH(LOG2_PROGRAM_SIZE)) program_access();
+    dual_port_ram
+    #(
+        .DATA_WIDTH(512),
+        .ADDR_WIDTH(LOG2_PROGRAM_SIZE)
+    )
+    proram_memory
+    (
+        .clk,
+        .raddr(program_access.raddr),
+        .waddr(program_access.waddr),
+        .data(program_access.wdata),
+        .we(program_access.we),
+        .re(program_access.re),
+        .qvalid(program_access.rvalid),
+        .q(program_access.rdata)
+    );
 
     // ====================================================================
     //
@@ -136,6 +152,8 @@ module glm
             request_state <= RXTX_STATE_IDLE;
             receive_state <= RXTX_STATE_IDLE;
             af2cp_sTx.c0.valid <= 1'b0;
+
+            program_access.we <= 1'b0;
         end
         else
         begin
@@ -193,6 +211,7 @@ module glm
             //   Receive State Machine
             //
             // =================================
+            program_access.we <= 1'b0;
             case (receive_state)
                 RXTX_STATE_IDLE:
                 begin
@@ -207,7 +226,9 @@ module glm
                 begin
                     if (cci_c0Rx_isReadRsp(cp2af_sRx.c0))
                     begin
-                        memory_program[program_length_receive] <= cp2af_sRx.c0.data;
+                        program_access.we <= 1'b1;
+                        program_access.waddr <= program_length_receive;
+                        program_access.wdata <= cp2af_sRx.c0.data;
                         program_length_receive <= program_length_receive + 1;
                         if (program_length_receive == program_length-1)
                         begin
@@ -556,10 +577,12 @@ module glm
             op_start <= 6'b0;
             opcode <= 8'b0;
             nonblocking <= 1'b0;
+            program_access.re <= 1'b0;
         end
         else
         begin
             op_start <= 6'b0;
+            program_access.re <= 1'b0;
 
             case(machine_state)
                 MACHINE_STATE_IDLE:
@@ -573,11 +596,21 @@ module glm
 
                 MACHINE_STATE_INSTRUCTION_FETCH:
                 begin
-                    for (int i=0; i < 16; i=i+1)
+                    program_access.re <= 1'b1;
+                    program_access.raddr <= program_counter;
+                    machine_state <= MACHINE_STATE_INSTRUCTION_RECEIVE;
+                end
+
+                MACHINE_STATE_INSTRUCTION_RECEIVE:
+                begin
+                    if (program_access.rvalid)
                     begin
-                        instruction[i] <= memory_program[program_counter] [ (i*32)+31 -: 32 ];
+                        for (int i=0; i < 16; i=i+1)
+                        begin
+                            instruction[i] <= program_access.rdata[ (i*32)+31 -: 32 ];
+                        end
+                        machine_state <= MACHINE_STATE_INSTRUCTION_DECODE;
                     end
-                    machine_state <= MACHINE_STATE_INSTRUCTION_DECODE;
                 end
 
                 MACHINE_STATE_INSTRUCTION_DECODE:
