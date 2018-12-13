@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<deploy
+ date="2016.07.21.09:42:44"
+ outputDirectory="/nfs/pdx/disks/atp.08/users/nravicha/git_BDW_refresh/cpt_bdx_shell-bdx_fpga_piu/par/integrated/bdx-p/ca/bdw_503_pr_pkg/lib/green/AFU_debug/SCJIO/">
+ <perimeter>
+  <parameter
+     name="AUTO_GENERATION_ID"
+     type="Integer"
+     defaultValue="0"
+     onHdl="0"
+     affectsHdl="1" />
+  <parameter
+     name="AUTO_UNIQUE_ID"
+     type="String"
+     defaultValue=""
+     onHdl="0"
+     affectsHdl="1" />
+  <parameter
+     name="AUTO_DEVICE_FAMILY"
+     type="String"
+     defaultValue="Arria 10"
+     onHdl="0"
+     affectsHdl="1" />
+  <parameter
+     name="AUTO_DEVICE"
+     type="String"
+     defaultValue="10AX115U3F45E2SGE3"
+     onHdl="0"
+     affectsHdl="1" />
+  <parameter
+     name="AUTO_DEVICE_SPEEDGRADE"
+     type="String"
+     defaultValue="2"
+     onHdl="0"
+     affectsHdl="1" />
+  <parameter
+     name="AUTO_TCK_CLOCK_RATE"
+     type="Long"
+     defaultValue="-1"
+     onHdl="0"
+     affectsHdl="1" />
+  <parameter
+     name="AUTO_TCK_CLOCK_DOMAIN"
+     type="Integer"
+     defaultValue="-1"
+     onHdl="0"
+     affectsHdl="1" />
+  <parameter
+     name="AUTO_TCK_RESET_DOMAIN"
+     type="Integer"
+     defaultValue="-1"
+     onHdl="0"
+     affectsHdl="1" />
+  <interface name="jtag" kind="conduit" start="0">
+   <property name="associatedClock" value="tck" />
+   <property name="associatedReset" value="" />
+   <port name="tms" direction="input" role="tms" width="1" />
+   <port name="tdi" direction="input" role="tdi" width="1" />
+   <port name="tdo" direction="output" role="tdo" width="1" />
+  </interface>
+  <interface name="tck" kind="clock" start="0">
+   <property name="clockRate" value="0" />
+   <property name="externallyDriven" value="false" />
+   <property name="ptfSchematicName" value="" />
+   <port name="tck" direction="input" role="clk" width="1" />
+  </interface>
+ </perimeter>
+ <entity kind="SCJIO" version="1.0" name="SCJIO">
+  <parameter name="AUTO_GENERATION_ID" value="1469119364" />
+  <parameter name="AUTO_DEVICE" value="10AX115U3F45E2SGE3" />
+  <parameter name="AUTO_TCK_RESET_DOMAIN" value="-1" />
+  <parameter name="AUTO_DEVICE_FAMILY" value="Arria 10" />
+  <parameter name="AUTO_TCK_CLOCK_DOMAIN" value="-1" />
+  <parameter name="AUTO_TCK_CLOCK_RATE" value="-1" />
+  <parameter name="AUTO_UNIQUE_ID" value="" />
+  <parameter name="AUTO_DEVICE_SPEEDGRADE" value="2" />
+  <generatedFiles>
+   <file
+       path="/nfs/pdx/disks/atp.08/users/nravicha/git_BDW_refresh/cpt_bdx_shell-bdx_fpga_piu/par/integrated/bdx-p/ca/bdw_503_pr_pkg/lib/green/AFU_debug/SCJIO/synth/SCJIO.v"
+       attributes="CONTAINS_INLINE_CONFIGURATION" />
+  </generatedFiles>
+  <childGeneratedFiles>
+   <file
+       path="/nfs/pdx/disks/atp.08/users/nravicha/git_BDW_refresh/cpt_bdx_shell-bdx_fpga_piu/par/integrated/bdx-p/ca/bdw_503_pr_pkg/lib/green/AFU_debug/SCJIO/synth/SCJIO.v"
+       attributes="CONTAINS_INLINE_CONFIGURATION" />
+  </childGeneratedFiles>
+  <sourceFiles>
+   <file
+       path="/nfs/pdx/disks/atp.08/users/nravicha/git_BDW_refresh/cpt_bdx_shell-bdx_fpga_piu/par/integrated/bdx-p/ca/bdw_503_pr_pkg/lib/green/AFU_debug/SCJIO.qsys" />
+  </sourceFiles>
+  <childSourceFiles>
+   <file
+       path="/nfs/pdx/disks/atp.08/tools/altera/16.0.0.211-Pro/ip/altera/sld/jtag/altera_soft_core_jtag_io/altera_soft_core_jtag_io_hw.tcl" />
+  </childSourceFiles>
+  <messages>
+   <message level="Info" culprit="SCJIO">"Generating: SCJIO"</message>
+   <message level="Info" culprit="SCJIO">"Generating: altera_soft_core_jtag_io"</message>
+  </messages>
+ </entity>
+ <entity
+   kind="altera_soft_core_jtag_io"
+   version="16.0"
+   name="altera_soft_core_jtag_io">
+  <generatedFiles/>
+  <childGeneratedFiles/>
+  <sourceFiles>
+   <file
+       path="/nfs/pdx/disks/atp.08/tools/altera/16.0.0.211-Pro/ip/altera/sld/jtag/altera_soft_core_jtag_io/altera_soft_core_jtag_io_hw.tcl" />
+  </sourceFiles>
+  <childSourceFiles/>
+  <instantiator instantiator="SCJIO" as="soft_core_jtag_io_0" />
+  <messages>
+   <message level="Info" culprit="SCJIO">"Generating: altera_soft_core_jtag_io"</message>
+  </messages>
+ </entity>
+</deploy>

@@ -1,0 +1,9 @@
+	component SCJIO is
+		port (
+			tms : in  std_logic := 'X'; -- tms
+			tdi : in  std_logic := 'X'; -- tdi
+			tdo : out std_logic;        -- tdo
+			tck : in  std_logic := 'X'  -- clk
+		);
+	end component SCJIO;
+

@@ -1,0 +1,18 @@
+# system info SCJIO on 2016.07.21.09:42:42
+system_info:
+name,value
+DEVICE,10AX115U3F45E2SGE3
+DEVICE_FAMILY,Arria 10
+GENERATION_ID,1469119362
+#
+#
+# Files generated for SCJIO on 2016.07.21.09:42:42
+files:
+filepath,kind,attributes,module,is_top
+sim/SCJIO.v,VERILOG,CONTAINS_INLINE_CONFIGURATION,SCJIO,true
+altera_soft_core_jtag_io_160/sim/altera_soft_core_jtag_io.v,VERILOG,,altera_soft_core_jtag_io,false
+#
+# Map from instance-path to kind of module
+instances:
+instancePath,module
+SCJIO.soft_core_jtag_io_0,altera_soft_core_jtag_io
