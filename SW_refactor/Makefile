@@ -22,7 +22,7 @@ COMMON		= ./src/ColumnML.cpp ./src/ColumnStore.cpp
 
 .PHONY: all clean distclean
 
-all: cpu_tests fpga_tests
+all: blockwise_tests #cpu_tests fpga_tests
 
 cpu_tests: ./tests/cpu_tests.cpp $(COMMON)./src/ColumnML.h ./src/ColumnStore.h
 	$(CXX) -D HARPv2 $(CPPFLAGS) ./tests/cpu_tests.cpp $(COMMON) -o cpu_tests -lpthread
@@ -30,6 +30,10 @@ cpu_tests: ./tests/cpu_tests.cpp $(COMMON)./src/ColumnML.h ./src/ColumnStore.h
 fpga_tests: ./tests/fpga_tests.cpp $(COMMON) $(FPGA_COMMON) ./driver/iFPGA.h ./driver/RuntimeClient.h ./src/ColumnML.h ./src/ColumnStore.h ./src/FPGA_ColumnML.h 
 	$(CXX) -D HARPv2 -I$(AALSDK)/include $(CPPFLAGS) ./tests/fpga_tests.cpp $(COMMON) $(FPGA_COMMON) -o fpga_tests -L$(AALSDK)/lib -lpthread $(LDFLAGS) -laalrt
 
+blockwise_tests: ./tests/blockwise_tests.cpp $(COMMON)./src/ColumnML.h ./src/ColumnStore.h
+	$(CXX) -D HARPv2 $(CPPFLAGS) ./tests/blockwise_tests.cpp $(COMMON) -o blockwise_tests -lpthread
+
 clean:
 	rm cpu_tests
 	rm fpga_tests
+	rm blockwise_tests

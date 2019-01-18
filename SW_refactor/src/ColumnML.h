@@ -35,7 +35,7 @@ using namespace std;
 
 // #define PRINT_TIMING
 // #define PRINT_LOSS
-// #define PRINT_ACCURACY
+#define PRINT_ACCURACY
 // #define SGD_SHUFFLE
 // #define SCD_SHUFFLE
 
@@ -126,6 +126,16 @@ public:
 		float* xHistory, 
 		uint32_t numEpochs, 
 		uint32_t minibatchSize, 
+		float stepSize, 
+		float lambda, 
+		AdditionalArguments* args);
+	void blockwise_SGD(
+		ModelType type, 
+		float* xHistory, 
+		uint32_t numEpochs, 
+		uint32_t minibatchSize,
+		uint32_t blockSize,
+		uint32_t numBlocksAtATime,
 		float stepSize, 
 		float lambda, 
 		AdditionalArguments* args);

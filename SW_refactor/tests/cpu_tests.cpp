@@ -106,7 +106,7 @@ int main(int argc, char* argv[]) {
 
 	// StepSizeSweepSCD(columnML, type, numEpochs, numSamples, lambda, args);
 
-	SGDvsSCDPerformance(columnML, type, numEpochs, lambda, args);
+	// SGDvsSCDPerformance(columnML, type, numEpochs, lambda, args);
 	
 	// PredictionSCD(
 	// 	columnML,
