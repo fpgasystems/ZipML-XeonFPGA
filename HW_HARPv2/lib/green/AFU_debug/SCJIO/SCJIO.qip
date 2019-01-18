@@ -1,0 +1,43 @@
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_TOOL_NAME "QsysPrimePro"
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_TOOL_VERSION "16.0"
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_TOOL_ENV "QsysPrimePro"
+set_global_assignment -library "SCJIO" -name SOPCINFO_FILE [file join $::quartus(qip_path) "../SCJIO.sopcinfo"]
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name SLD_INFO "QSYS_NAME SCJIO HAS_SOPCINFO 1 GENERATION_ID 1469119364"
+set_global_assignment -library "SCJIO" -name MISC_FILE [file join $::quartus(qip_path) "SCJIO.cmp"]
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_TARGETED_DEVICE_FAMILY "Arria 10"
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_GENERATED_DEVICE_FAMILY "{Arria 10}"
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_QSYS_MODE "STANDALONE"
+set_global_assignment -name SYNTHESIS_ONLY_QIP ON
+set_global_assignment -library "SCJIO" -name MISC_FILE [file join $::quartus(qip_path) "../SCJIO.qsys"]
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_NAME "U0NKSU8="
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_DISPLAY_NAME "U0NKSU8="
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_REPORT_HIERARCHY "On"
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_INTERNAL "Off"
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_VERSION "MS4w"
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_PARAMETER "QVVUT19HRU5FUkFUSU9OX0lE::MTQ2OTExOTM2NA==::QXV0byBHRU5FUkFUSU9OX0lE"
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_PARAMETER "QVVUT19ERVZJQ0VfRkFNSUxZ::QXJyaWEgMTA=::QXV0byBERVZJQ0VfRkFNSUxZ"
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_PARAMETER "QVVUT19ERVZJQ0U=::MTBBWDExNVUzRjQ1RTJTR0Uz::QXV0byBERVZJQ0U="
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_PARAMETER "QVVUT19ERVZJQ0VfU1BFRURHUkFERQ==::Mg==::QXV0byBERVZJQ0VfU1BFRURHUkFERQ=="
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_PARAMETER "QVVUT19UQ0tfQ0xPQ0tfUkFURQ==::LTE=::QXV0byBDTE9DS19SQVRF"
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_PARAMETER "QVVUT19UQ0tfQ0xPQ0tfRE9NQUlO::LTE=::QXV0byBDTE9DS19ET01BSU4="
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_PARAMETER "QVVUT19UQ0tfUkVTRVRfRE9NQUlO::LTE=::QXV0byBSRVNFVF9ET01BSU4="
+set_global_assignment -entity "SCJIO" -library "SCJIO" -name IP_COMPONENT_GROUP "U3lzdGVt"
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_NAME "YWx0ZXJhX3NvZnRfY29yZV9qdGFnX2lv"
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_DISPLAY_NAME "QWx0ZXJhIFNvZnQgQ29yZSBKVEFHIElP"
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_REPORT_HIERARCHY "Off"
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_INTERNAL "Off"
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_AUTHOR "QWx0ZXJhIENvcnBvcmF0aW9u"
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_VERSION "MTYuMA=="
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_DESCRIPTION "VGhpcyBzb2Z0IEpUQUcgSS9PIG1lZ2FmdW5jdGlvbiwgYWx0ZXJhX3NvZnRfY29yZV9qdGFnX2lvLCBwcm92aWRlcyBhIHN0YW5kYXJkIEpUQUcgaW50ZXJmYWNlIHRoYXQgY29udHJvbHMgYWxsIEpUQUcgYmFzZWQgU0xEIGRlYnVnIG5vZGVzLjxicj4gIFVuZGVyIHRoZSBob29kLCBpdCByZWFsbHkgY29udHJvbHMgU0xEIEpUQUcgaHViIHRvIHdoaWNoIFNMRCBkZWJ1ZyBub2RlcyBjb25uZWN0LiAgT3B0aW9uYWxseSwgaXQgcHJvdmlkZXMgYSBzaWduYWwgdG8gc2VsZWN0IHdoZXRoZXIgU0xEIEpUQUcgaHViIGlzIGNvbnRyb2xsZWQgYnkgdGhlIEpUQUcgSS9PPGJyPm9uIHRoaXMgbWVnYWZ1bmN0aW9uIG9yIGJ5IHRoZSBKVEFHIEkvTyBvbiB0aGUgZGV2aWNlIEpUQUcgaGFyZCBjb250cm9sbGVyLgpBIG1pbmltYWwgSlRBRyBjb250cm9sbGVyIGlzIGltcGxlbWVudGVkIHRvIGFsbG93IGZ1bGwgb3BlcmF0aW9ucyBvZiB0b29sczxicj50aGF0IGNvbW11bmljYXRlIHRvIFNMRCBkZWJ1ZyBub2RlcyBjb25uZWN0ZWQgdG8gU0xEIEpUQUcgaHViLiAgVGhlIElSIGluc3RydWN0aW9ucyBpbXBsZW1lbnRlZCBhcmUgQllQQVNTLCBJRENPREUsIFVTUjAsIGFuZCBVU1IxLjxicj5BbGwgb3RoZXIgSVIgdmFsdWVzIGFyZSBtYXBwZWQgdG8gQllQQVNTLiAgVGhpcyBKVEFHIGNvbnRyb2xsZXIgcmV0dXJucyBJRENPREUgdmFsdWUsIDB4MDIwMDMwREQsIHdoaWNoIGlzIGFzc2lnbmVkIHRvIEFsdGVyYSBzb2Z0IEpUQUcgY29udHJvbGxlci48YnI+VGhlIHRkbyBvdXRwdXQgaXMgbmV2ZXIgdHJpLXN0YXRlZCwgd2hpY2ggZG9lcyBub3QgY29uZm9ybSB0byB0aGUgSlRBRyBzdGFuZGFyZC4gCk9ubHkgb25lIGluc3RhbmNlIG9mIHN1Y2ggbWVnYWZ1bmN0aW9uIGlzIGFsbG93ZWQgd2l0aGluIG9uZSBwcm9qZWN0Lg=="
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_PARAMETER "ZGV2aWNlX2ZhbWlseQ==::QXJyaWEgMTA=::ZGV2aWNlX2ZhbWlseQ=="
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_PARAMETER "RU5BQkxFX0pUQUdfSU9fU0VMRUNUSU9O::MA==::RU5BQkxFX0pUQUdfSU9fU0VMRUNUSU9O"
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_GROUP "QmFzaWMgRnVuY3Rpb25zL1NpbXVsYXRpb247IERlYnVnIGFuZCBWZXJpZmljYXRpb24vRGVidWcgYW5kIFBlcmZvcm1hbmNl"
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_DOCUMENTATION_LINK "aHR0cDovL3F1YXJ0dXNoZWxwLmFsdGVyYS5jb20vMTQuMC9tZXJnZWRQcm9qZWN0cy9oZGwvbWVnYS9tZWdhX2ZpbGVfc29mdGNvcmVfanRhZ19pby5odG0="
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_DOCUMENTATION_LINK "aHR0cDovL3F1YXJ0dXNoZWxwLmFsdGVyYS5jb20vMTUuMS9tZXJnZWRQcm9qZWN0cy9oZGwvbWVnYS9tZWdhX2ZpbGVfc29mdGNvcmVfanRhZ19pby5odG0="
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_COMPONENT_DOCUMENTATION_LINK "aHR0cHM6Ly9kb2N1bWVudGF0aW9uLmFsdGVyYS5jb20vIy9saW5rL2hjbzE0MjE2OTgwNDIwODcvaGNvMTQyMTY5ODAxMzQwOA=="
+
+set_global_assignment -library "SCJIO" -name VERILOG_FILE [file join $::quartus(qip_path) "synth/SCJIO.v"]
+
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_TOOL_NAME "altera_soft_core_jtag_io"
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_TOOL_VERSION "16.0"
+set_global_assignment -entity "altera_soft_core_jtag_io" -library "altera_soft_core_jtag_io_160" -name IP_TOOL_ENV "QsysPrimePro"

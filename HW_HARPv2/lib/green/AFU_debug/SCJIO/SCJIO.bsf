@@ -1,0 +1,76 @@
+/*
+WARNING: Do NOT edit the input and output ports in this file in a text
+editor if you plan to continue editing the block that represents it in
+the Block Editor! File corruption is VERY likely to occur.
+*/
+/*
+Copyright (C) 1991-2016 Altera Corporation. All rights reserved.
+Your use of Altera Corporation's design tools, logic functions 
+and other software and tools, and its AMPP partner logic 
+functions, and any output files from any of the foregoing 
+(including device programming or simulation files), and any 
+associated documentation or information are expressly subject 
+to the terms and conditions of the Altera Program License 
+Subscription Agreement, the Altera Quartus Prime License Agreement,
+the Altera MegaCore Function License Agreement, or other 
+applicable license agreement, including, without limitation, 
+that your use is for the sole purpose of programming logic 
+devices manufactured by Altera and sold by Altera or its 
+authorized distributors.  Please refer to the applicable 
+agreement for further details.
+*/
+(header "symbol" (version "1.1"))
+(symbol
+	(rect 0 0 96 176)
+	(text "SCJIO" (rect 30 -1 57 11)(font "Arial" (font_size 10)))
+	(text "inst" (rect 8 160 20 172)(font "Arial" ))
+	(port
+		(pt 0 72)
+		(input)
+		(text "tms" (rect 0 0 15 12)(font "Arial" (font_size 8)))
+		(text "tms" (rect 4 61 22 72)(font "Arial" (font_size 8)))
+		(line (pt 0 72)(pt 32 72)(line_width 1))
+	)
+	(port
+		(pt 0 88)
+		(input)
+		(text "tdi" (rect 0 0 8 12)(font "Arial" (font_size 8)))
+		(text "tdi" (rect 4 77 22 88)(font "Arial" (font_size 8)))
+		(line (pt 0 88)(pt 32 88)(line_width 1))
+	)
+	(port
+		(pt 0 144)
+		(input)
+		(text "tck" (rect 0 0 11 12)(font "Arial" (font_size 8)))
+		(text "tck" (rect 4 133 22 144)(font "Arial" (font_size 8)))
+		(line (pt 0 144)(pt 32 144)(line_width 1))
+	)
+	(port
+		(pt 0 104)
+		(output)
+		(text "tdo" (rect 0 0 11 12)(font "Arial" (font_size 8)))
+		(text "tdo" (rect 4 93 22 104)(font "Arial" (font_size 8)))
+		(line (pt 0 104)(pt 32 104)(line_width 1))
+	)
+	(drawing
+		(text "jtag" (rect 12 43 48 99)(font "Arial" (color 128 0 0)(font_size 9)))
+		(text "tms" (rect 37 67 92 144)(font "Arial" (color 0 0 0)))
+		(text "tdi" (rect 37 83 92 176)(font "Arial" (color 0 0 0)))
+		(text "tdo" (rect 37 99 92 208)(font "Arial" (color 0 0 0)))
+		(text "tck" (rect 16 115 50 243)(font "Arial" (color 128 0 0)(font_size 9)))
+		(text "clk" (rect 37 139 92 288)(font "Arial" (color 0 0 0)))
+		(text " SCJIO " (rect 65 160 172 330)(font "Arial" ))
+		(line (pt 32 32)(pt 64 32)(line_width 1))
+		(line (pt 64 32)(pt 64 160)(line_width 1))
+		(line (pt 32 160)(pt 64 160)(line_width 1))
+		(line (pt 32 32)(pt 32 160)(line_width 1))
+		(line (pt 33 52)(pt 33 108)(line_width 1))
+		(line (pt 34 52)(pt 34 108)(line_width 1))
+		(line (pt 33 124)(pt 33 148)(line_width 1))
+		(line (pt 34 124)(pt 34 148)(line_width 1))
+		(line (pt 0 0)(pt 96 0)(line_width 1))
+		(line (pt 96 0)(pt 96 176)(line_width 1))
+		(line (pt 0 176)(pt 96 176)(line_width 1))
+		(line (pt 0 0)(pt 0 176)(line_width 1))
+	)
+)

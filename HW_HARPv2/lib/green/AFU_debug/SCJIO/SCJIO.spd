@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<simPackage>
+ <file
+   path="altera_soft_core_jtag_io_160/sim/altera_soft_core_jtag_io.v"
+   type="VERILOG"
+   library="altera_soft_core_jtag_io_160" />
+ <file path="sim/SCJIO.v" type="VERILOG" hasInlineConfiguration="true" />
+ <topLevel name="SCJIO" />
+ <deviceFamily name="arria10" />
+</simPackage>

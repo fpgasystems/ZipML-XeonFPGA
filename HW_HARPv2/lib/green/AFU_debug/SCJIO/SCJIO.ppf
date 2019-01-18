@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pinplan
+ variation_name="soft_core_jtag_io_0"
+ megafunction_name="ALTERA_SOFT_CORE_JTAG_IO"
+ intended_family="Arria 10"
+ specifies="all_ports">
+ <global>
+  <pin name="tms" direction="input" scope="external" />
+  <pin name="tdi" direction="input" scope="external" />
+  <pin name="tdo" direction="output" scope="external" />
+  <pin name="tck" direction="input" scope="external" />
+ </global>
+</pinplan>
