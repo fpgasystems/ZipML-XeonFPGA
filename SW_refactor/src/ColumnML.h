@@ -34,7 +34,7 @@
 using namespace std;
 
 // #define PRINT_TIMING
-#define PRINT_LOSS
+// #define PRINT_LOSS
 // #define PRINT_ACCURACY
 // #define SGD_SHUFFLE
 // #define SCD_SHUFFLE

@@ -402,6 +402,11 @@ void ColumnML::blockwise_SGD(
 
 		ShuffleRange(blockIndexes, numBlocks);
 
+		if (args->m_constantStepSize == false) {
+			scaledStepSize = stepSize/minibatchSize;
+			scaledStepSize = scaledStepSize/sqrt(epoch+1);
+		}
+
 		uint32_t countBlocks = 0;
 		for (uint32_t k = 0; k < (uint32_t)(numBlocks/numBlocksAtATime); k++) {
 			for (uint32_t m = 0; m < numBlocksAtATime; m++) {

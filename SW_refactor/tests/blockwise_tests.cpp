@@ -79,7 +79,8 @@ int main(int argc, char* argv[]) {
 	AdditionalArguments args;
 	args.m_firstSample = 0;
 	args.m_numSamples = columnML->m_cstore->m_numSamples;
-	args.m_constantStepSize = true;
+	args.m_constantStepSize = false;
+	char sortByFeatureOrLabel = 'l';
 
 	float lossHistory[8][numEpochs+1];
 	float trainAccuracyHistory[8][numEpochs+1];
@@ -99,10 +100,10 @@ int main(int argc, char* argv[]) {
 		numBlocksAtATime,
 		stepSize, 
 		lambda, 
-		'f',
+		sortByFeatureOrLabel,
 		&args);
 
-	blockSize = 128;
+	blockSize = 1024;
 	numBlocksAtATime = 1;
 	for (uint32_t i = 0; i < 7; i++) {
 		args.m_firstSample = 0;
@@ -121,7 +122,7 @@ int main(int argc, char* argv[]) {
 			numBlocksAtATime,
 			stepSize, 
 			lambda, 
-			'f',
+			sortByFeatureOrLabel,
 			&args);
 		numBlocksAtATime *= 2;
 	}
