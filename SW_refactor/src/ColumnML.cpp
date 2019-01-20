@@ -297,16 +297,17 @@ static void SortByFeature(float*& samples, float*& labels, uint32_t numSamples, 
 	labels = tempLabels;
 }
 
-static void ShuffleRange(uint32_t* base, uint32_t count) {
+static void ShuffleRange(uint32_t* base, uint32_t count, bool shuffle) {
 	for (uint32_t i = 0; i < count; i++) {
 		base[i] = i;
 	}
-
-	for (uint32_t i = 0; i < count; i++) {
-		uint32_t index = rand() % count;
-		uint32_t temp = base[i];
-		base[i] = base[index];
-		base[index] = temp;
+	if (shuffle) {
+		for (uint32_t i = 0; i < count; i++) {
+			uint32_t index = rand() % count;
+			uint32_t temp = base[i];
+			base[i] = base[index];
+			base[index] = temp;
+		}
 	}
 }
 
@@ -323,6 +324,7 @@ void ColumnML::blockwise_SGD(
 	float stepSize, 
 	float lambda, 
 	char sortByLabelOrFeature,
+	bool shuffle,
 	AdditionalArguments* args)
 {
 	srand(3);
@@ -400,7 +402,7 @@ void ColumnML::blockwise_SGD(
 
 	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
 
-		ShuffleRange(blockIndexes, numBlocks);
+		ShuffleRange(blockIndexes, numBlocks, shuffle);
 
 		if (args->m_constantStepSize == false) {
 			scaledStepSize = stepSize/minibatchSize;
@@ -417,7 +419,7 @@ void ColumnML::blockwise_SGD(
 				}
 			}
 
-			ShuffleRange(sampleIndexes, numBlocksAtATime*blockSize);
+			ShuffleRange(sampleIndexes, numBlocksAtATime*blockSize, shuffle);
 
 			for (uint32_t i = 0; i < numBlocksAtATime*blockSize; i++) {
 
@@ -446,7 +448,7 @@ void ColumnML::blockwise_SGD(
 				}
 			}
 
-			ShuffleRange(sampleIndexes, restOfTheBlocks*blockSize);
+			ShuffleRange(sampleIndexes, restOfTheBlocks*blockSize, shuffle);
 
 			for (uint32_t i = 0; i < restOfTheBlocks*blockSize; i++) {
 				uint32_t currentIndex = sampleIndexes[i];

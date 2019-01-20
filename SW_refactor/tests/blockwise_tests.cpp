@@ -79,14 +79,13 @@ int main(int argc, char* argv[]) {
 	AdditionalArguments args;
 	args.m_firstSample = 0;
 	args.m_numSamples = columnML->m_cstore->m_numSamples;
-	args.m_constantStepSize = false;
+	args.m_constantStepSize = true;
 	char sortByFeatureOrLabel = 'l';
+	bool shuffle = true;
 
 	float lossHistory[8][numEpochs+1];
 	float trainAccuracyHistory[8][numEpochs+1];
 	float testAccuracyHistory[8][numEpochs+1];
-
-	ofstream ofs ("temp.log", std::ofstream::out);
 
 	columnML->blockwise_SGD(
 		type,
@@ -101,6 +100,7 @@ int main(int argc, char* argv[]) {
 		stepSize, 
 		lambda, 
 		sortByFeatureOrLabel,
+		shuffle,
 		&args);
 
 	blockSize = 1024;
@@ -123,10 +123,12 @@ int main(int argc, char* argv[]) {
 			stepSize, 
 			lambda, 
 			sortByFeatureOrLabel,
+			shuffle,
 			&args);
 		numBlocksAtATime *= 2;
 	}
 
+	ofstream ofs ("temp.log", std::ofstream::out);
 
 	for (uint32_t e = 0; e < numEpochs+1; e++) {
 		for (uint32_t i = 0; i < 8; i++) {

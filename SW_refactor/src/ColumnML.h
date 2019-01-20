@@ -198,6 +198,7 @@ public:
 		float stepSize, 
 		float lambda, 
 		char sortByLabelOrFeature,
+		bool shuffle,
 		AdditionalArguments* args);
 #ifdef AVX2
 	void AVX_SGD(
