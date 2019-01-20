@@ -15,6 +15,7 @@
 //*************************************************************************
 
 #include <iostream>
+#include <fstream>
 
 #include "../src/ColumnML.h"
 
@@ -58,30 +59,90 @@ int main(int argc, char* argv[]) {
 		type = logreg;
 	}
 
+
+	// uint32_t count = 50;
+	// tuple_t temp[count];
+	// for (uint32_t i = 0; i < count; i++) {
+	// 	temp[i].index = i;
+	// 	temp[i].feature = rand()%count;
+	// }
+	// for (uint32_t i = 0; i < count; i++) {
+	// 	cout << temp[i].index << ": " << temp[i].feature << endl;
+	// }
+	// quicksort(temp, 0, count-1);
+	// cout << "**********************" << endl;
+	// for (uint32_t i = 0; i < count; i++) {
+	// 	cout << temp[i].index << ": " << temp[i].feature << endl;
+	// }
+
+
 	AdditionalArguments args;
 	args.m_firstSample = 0;
 	args.m_numSamples = columnML->m_cstore->m_numSamples;
 	args.m_constantStepSize = true;
 
-	// columnML->SGD(
-	// 	type,
-	// 	nullptr,
-	// 	numEpochs,
-	// 	1,
-	// 	stepSize,
-	// 	lambda,
-	// 	&args);
+	float lossHistory[8][numEpochs+1];
+	float trainAccuracyHistory[8][numEpochs+1];
+	float testAccuracyHistory[8][numEpochs+1];
+
+	ofstream ofs ("temp.log", std::ofstream::out);
 
 	columnML->blockwise_SGD(
 		type,
 		nullptr,
+		lossHistory[0],
+		trainAccuracyHistory[0],
+		testAccuracyHistory[0],
 		numEpochs,
 		1,
 		blockSize,
 		numBlocksAtATime,
 		stepSize, 
 		lambda, 
+		'f',
 		&args);
+
+	blockSize = 128;
+	numBlocksAtATime = 1;
+	for (uint32_t i = 0; i < 7; i++) {
+		args.m_firstSample = 0;
+		args.m_numSamples = columnML->m_cstore->m_numSamples;
+		cout << "blockSize: " << blockSize << endl;
+		cout << "numBlocksAtATime: " << numBlocksAtATime << endl;
+		columnML->blockwise_SGD(
+			type,
+			nullptr,
+			lossHistory[i+1],
+			trainAccuracyHistory[i+1],
+			testAccuracyHistory[i+1],
+			numEpochs,
+			1,
+			blockSize,
+			numBlocksAtATime,
+			stepSize, 
+			lambda, 
+			'f',
+			&args);
+		numBlocksAtATime *= 2;
+	}
+
+
+	for (uint32_t e = 0; e < numEpochs+1; e++) {
+		for (uint32_t i = 0; i < 8; i++) {
+			ofs << lossHistory[i][e] << " ";
+		}
+		ofs << " ";
+		for (uint32_t i = 0; i < 8; i++) {
+			ofs << trainAccuracyHistory[i][e] << " ";
+		}
+		ofs << " ";
+		for (uint32_t i = 0; i < 8; i++) {
+			ofs << testAccuracyHistory[i][e] << " ";
+		}
+		ofs << endl;
+	}
+
+	ofs.close();
 
 	return 0;
 }

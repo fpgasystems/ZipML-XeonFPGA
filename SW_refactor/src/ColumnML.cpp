@@ -274,6 +274,28 @@ static void SortByBinaryLabel(float*& samples, float*& labels, uint32_t numSampl
 	labels = tempLabels;
 }
 
+static void SortByFeature(float*& samples, float*& labels, uint32_t numSamples, uint32_t numFeatures, uint32_t whichFeature) {
+	tuple_t* tuples = (tuple_t*)aligned_alloc(64, numSamples*sizeof(tuple_t));
+	for (uint32_t i = 0; i < numSamples; i++) {
+		tuples[i].index = i;
+		tuples[i].feature = samples[i*numFeatures + whichFeature];
+	}
+
+	quicksort(tuples, 0, numSamples-1);
+
+	float* tempSamples = (float*)aligned_alloc(64, numSamples*numFeatures*sizeof(float));
+	float* tempLabels = (float*)aligned_alloc(64, numSamples*sizeof(float));
+	for (uint32_t i = 0; i < numSamples; i++) {
+		CopySample(tempSamples, samples, tuples[i].index, i, numFeatures);
+		tempLabels[tuples[i].index] = labels[i];
+	}
+
+	free(samples);
+	free(labels);
+
+	samples = tempSamples;
+	labels = tempLabels;
+}
 
 static void ShuffleRange(uint32_t* base, uint32_t count) {
 	for (uint32_t i = 0; i < count; i++) {
@@ -290,19 +312,29 @@ static void ShuffleRange(uint32_t* base, uint32_t count) {
 
 void ColumnML::blockwise_SGD(
 	ModelType type, 
-	float* xHistory, 
+	float* xHistory,
+	float* lossHistory,
+	float* trainAccuracyHistory,
+	float* testAccuracyHistory,
 	uint32_t numEpochs, 
 	uint32_t minibatchSize,
 	uint32_t blockSize,
 	uint32_t numBlocksAtATime,
 	float stepSize, 
 	float lambda, 
+	char sortByLabelOrFeature,
 	AdditionalArguments* args)
 {
-	uint32_t initalNumSamples = args->m_numSamples;
-	args->m_numSamples = (uint32_t)(initalNumSamples*0.7) - ((uint32_t)(initalNumSamples*0.7)%64);
-	cout << "args->m_numSamples: " << args->m_numSamples << endl;
+	srand(3);
 
+	uint32_t totalNumSamples = args->m_numSamples;
+	uint32_t trainNumSamples = 0.7*totalNumSamples;
+	uint32_t testNumSamples = 0.3*totalNumSamples;
+
+	cout << "trainNumSamples: " << trainNumSamples << endl;
+	cout << "testNumSamples: " << testNumSamples << endl;
+
+	args->m_numSamples = trainNumSamples;
 
 	float* x = (float*)aligned_alloc(64, m_cstore->m_numFeatures*sizeof(float));
 	memset(x, 0, m_cstore->m_numFeatures*sizeof(float));
@@ -317,7 +349,13 @@ void ColumnML::blockwise_SGD(
 		}
 		labels[i] = m_cstore->m_labels[i];
 	}
-	SortByBinaryLabel(samples, labels, args->m_numSamples, m_cstore->m_numFeatures);
+	if (sortByLabelOrFeature == 'f') {
+		SortByFeature(samples, labels, args->m_numSamples, m_cstore->m_numFeatures, 0);
+	}
+	else if (sortByLabelOrFeature == 'l') {
+		SortByBinaryLabel(samples, labels, args->m_numSamples, m_cstore->m_numFeatures);
+	}
+	
 
 	cout << "AVX_SGD ---------------------------------------" << endl;
 	uint32_t numBlocks = args->m_numSamples/blockSize;
@@ -326,17 +364,28 @@ void ColumnML::blockwise_SGD(
 	cout << "rest: " << rest << endl;
 
 	cout << "numBlocksAtATime: " << numBlocksAtATime << endl;
+	uint32_t restOfTheBlocks = numBlocks%numBlocksAtATime;
+	cout << "restOfTheBlocks: " << restOfTheBlocks << endl;
 
-#ifdef PRINT_LOSS
-	cout << "Initial loss: " << Loss(type, x, lambda, args) << endl;
-#endif
-#ifdef PRINT_ACCURACY
-	args->m_firstSample = initalNumSamples*0.7;
-	args->m_numSamples = initalNumSamples*0.3;
-	cout << "Initial accuracy: " << Accuracy(type, x, args) << " corrects out of " << args->m_numSamples << endl;
+
+	float loss = Loss(type, x, lambda, args);
+	float trainAccuracy = Accuracy(type, x, args)/(float)trainNumSamples;
+	args->m_firstSample = trainNumSamples;
+	args->m_numSamples = testNumSamples;
+	float testAccuracy = Accuracy(type, x, args)/(float)testNumSamples;
 	args->m_firstSample = 0;
-	args->m_numSamples = initalNumSamples*0.7;
-#endif
+	args->m_numSamples = trainNumSamples;
+	cout << loss << "   \t" << trainAccuracy << "   \t" << testAccuracy << endl;
+	if (lossHistory != nullptr) {
+		lossHistory[0] = loss;
+	}
+	if (trainAccuracyHistory != nullptr) {
+		trainAccuracyHistory[0] = trainAccuracy;
+	}
+	if (testAccuracyHistory != nullptr) {
+		testAccuracyHistory[0] = testAccuracy;
+	}
+
 
 	float* subSamples = (float*)aligned_alloc(64, numBlocksAtATime*blockSize*m_cstore->m_numFeatures*sizeof(float));
 	float* subLabels = (float*)aligned_alloc(64, numBlocksAtATime*blockSize*sizeof(float));
@@ -346,15 +395,15 @@ void ColumnML::blockwise_SGD(
 
 	float scaledStepSize = stepSize/minibatchSize;
 
+	// ShuffleRange(blockIndexes, numBlocks);
+	// ShuffleRange(sampleIndexes, numBlocksAtATime*blockSize);
 
 	for(uint32_t epoch = 0; epoch < numEpochs; epoch++) {
 
-		
 		ShuffleRange(blockIndexes, numBlocks);
 
 		uint32_t countBlocks = 0;
 		for (uint32_t k = 0; k < (uint32_t)(numBlocks/numBlocksAtATime); k++) {
-
 			for (uint32_t m = 0; m < numBlocksAtATime; m++) {
 				uint32_t blockIndex = blockIndexes[countBlocks++];
 				for (uint32_t i = 0; i < blockSize; i++) {
@@ -383,7 +432,6 @@ void ColumnML::blockwise_SGD(
 			}
 		}
 
-		uint32_t restOfTheBlocks = numBlocks%numBlocksAtATime;
 		if (restOfTheBlocks > 0) {
 			for (uint32_t m = 0; m < restOfTheBlocks; m++) {
 				uint32_t blockIndex = blockIndexes[countBlocks++];
@@ -412,26 +460,30 @@ void ColumnML::blockwise_SGD(
 			}
 		}
 
-
 		if (xHistory != nullptr) {
 			for (uint32_t j = 0; j < m_cstore->m_numFeatures; j++) {
 				xHistory[epoch*m_cstore->m_numFeatures + j] = x[j];
 			}
 		}
 		else {
-#ifdef PRINT_LOSS
-			cout << Loss(type, x, lambda, args) << endl;
-#endif
-#ifdef PRINT_ACCURACY
-			args->m_firstSample = initalNumSamples*0.7;
-			args->m_numSamples = initalNumSamples*0.3;
-			// cout << Accuracy(type, x, args) << " corrects out of " << args->m_numSamples << endl;
-			cout << Accuracy(type, x, args)/(float)args->m_numSamples << endl;
+			loss = Loss(type, x, lambda, args);
+			trainAccuracy = Accuracy(type, x, args)/(float)trainNumSamples;
+			args->m_firstSample = trainNumSamples;
+			args->m_numSamples = testNumSamples;
+			testAccuracy = Accuracy(type, x, args)/(float)testNumSamples;
 			args->m_firstSample = 0;
-			args->m_numSamples = initalNumSamples*0.7;
-#endif
+			args->m_numSamples = trainNumSamples;
+			cout << loss << "   \t" << trainAccuracy << "   \t" << testAccuracy << endl;
+			if (lossHistory != nullptr) {
+				lossHistory[epoch+1] = loss;
+			}
+			if (trainAccuracyHistory != nullptr) {
+				trainAccuracyHistory[epoch+1] = trainAccuracy;
+			}
+			if (testAccuracyHistory != nullptr) {
+				testAccuracyHistory[epoch+1] = testAccuracy;
+			}
 		}
-
 	}
 
 	free(x);

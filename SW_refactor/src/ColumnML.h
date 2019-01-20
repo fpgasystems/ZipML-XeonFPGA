@@ -34,8 +34,8 @@
 using namespace std;
 
 // #define PRINT_TIMING
-// #define PRINT_LOSS
-#define PRINT_ACCURACY
+#define PRINT_LOSS
+// #define PRINT_ACCURACY
 // #define SGD_SHUFFLE
 // #define SCD_SHUFFLE
 
@@ -60,6 +60,62 @@ struct AdditionalArguments
 
 	bool m_constantStepSize;
 };
+
+
+struct tuple_t {
+	uint32_t index;
+	float feature;
+};
+
+static uint32_t partition(tuple_t* base, uint32_t low, uint32_t high) {
+
+	uint32_t half = (low+high)/2;
+	float pivot = base[half].feature;
+
+	tuple_t* temp = (tuple_t*)malloc((high-low+1)*sizeof(tuple_t));
+	uint32_t lessCount = 0;
+	uint32_t pivotCount = 0;
+	uint32_t moreCount = 0;
+	for (uint32_t i = low; i <= high; i++) {
+		lessCount += (base[i].feature < pivot);
+		pivotCount += (base[i].feature == pivot);
+		moreCount += (base[i].feature > pivot);
+		temp[i-low] = base[i];
+	}
+
+	uint32_t lessIndex = low;
+	uint32_t pivotIndex = lessIndex+lessCount;
+	uint32_t moreIndex = pivotIndex+pivotCount;
+	for (uint32_t i = low; i <= high; i++) {
+		uint32_t offseti = i-low;
+
+		if (temp[offseti].feature < pivot) {
+			base[lessIndex++] = temp[offseti];
+		}
+		else if (temp[offseti].feature == pivot) {
+			base[pivotIndex++] = temp[offseti];
+		}
+		else {
+			base[moreIndex++] = temp[offseti];
+		}
+	}
+
+	free(temp);
+
+	return lessIndex;
+}
+
+static void quicksort(tuple_t* base, uint32_t low, uint32_t high) {
+	if (low < high) {
+		uint32_t p = partition(base, low, high);
+		if (p > low) {
+			quicksort(base, low, p);
+		}
+		if (high > p+1) {
+			quicksort(base, p+1, high);
+		}
+	}
+}
 
 class ColumnML {
 public:
@@ -132,12 +188,16 @@ public:
 	void blockwise_SGD(
 		ModelType type, 
 		float* xHistory, 
+		float* lossHistory,
+		float* trainAccuracyHistory,
+		float* testAccuracyHistory,
 		uint32_t numEpochs, 
 		uint32_t minibatchSize,
 		uint32_t blockSize,
 		uint32_t numBlocksAtATime,
 		float stepSize, 
 		float lambda, 
+		char sortByLabelOrFeature,
 		AdditionalArguments* args);
 #ifdef AVX2
 	void AVX_SGD(
