@@ -103,49 +103,49 @@ int main(int argc, char* argv[]) {
 		shuffle,
 		&args);
 
-	blockSize = 1024;
-	numBlocksAtATime = 1;
-	for (uint32_t i = 0; i < 7; i++) {
-		args.m_firstSample = 0;
-		args.m_numSamples = columnML->m_cstore->m_numSamples;
-		cout << "blockSize: " << blockSize << endl;
-		cout << "numBlocksAtATime: " << numBlocksAtATime << endl;
-		columnML->blockwise_SGD(
-			type,
-			nullptr,
-			lossHistory[i+1],
-			trainAccuracyHistory[i+1],
-			testAccuracyHistory[i+1],
-			numEpochs,
-			1,
-			blockSize,
-			numBlocksAtATime,
-			stepSize, 
-			lambda, 
-			sortByFeatureOrLabel,
-			shuffle,
-			&args);
-		numBlocksAtATime *= 2;
-	}
+	// blockSize = 1024;
+	// numBlocksAtATime = 1;
+	// for (uint32_t i = 0; i < 7; i++) {
+	// 	args.m_firstSample = 0;
+	// 	args.m_numSamples = columnML->m_cstore->m_numSamples;
+	// 	cout << "blockSize: " << blockSize << endl;
+	// 	cout << "numBlocksAtATime: " << numBlocksAtATime << endl;
+	// 	columnML->blockwise_SGD(
+	// 		type,
+	// 		nullptr,
+	// 		lossHistory[i+1],
+	// 		trainAccuracyHistory[i+1],
+	// 		testAccuracyHistory[i+1],
+	// 		numEpochs,
+	// 		1,
+	// 		blockSize,
+	// 		numBlocksAtATime,
+	// 		stepSize, 
+	// 		lambda, 
+	// 		sortByFeatureOrLabel,
+	// 		shuffle,
+	// 		&args);
+	// 	numBlocksAtATime *= 2;
+	// }
 
-	ofstream ofs ("temp.log", std::ofstream::out);
+	// ofstream ofs ("temp.log", std::ofstream::out);
 
-	for (uint32_t e = 0; e < numEpochs+1; e++) {
-		for (uint32_t i = 0; i < 8; i++) {
-			ofs << lossHistory[i][e] << " ";
-		}
-		ofs << " ";
-		for (uint32_t i = 0; i < 8; i++) {
-			ofs << trainAccuracyHistory[i][e] << " ";
-		}
-		ofs << " ";
-		for (uint32_t i = 0; i < 8; i++) {
-			ofs << testAccuracyHistory[i][e] << " ";
-		}
-		ofs << endl;
-	}
+	// for (uint32_t e = 0; e < numEpochs+1; e++) {
+	// 	for (uint32_t i = 0; i < 8; i++) {
+	// 		ofs << lossHistory[i][e] << " ";
+	// 	}
+	// 	ofs << " ";
+	// 	for (uint32_t i = 0; i < 8; i++) {
+	// 		ofs << trainAccuracyHistory[i][e] << " ";
+	// 	}
+	// 	ofs << " ";
+	// 	for (uint32_t i = 0; i < 8; i++) {
+	// 		ofs << testAccuracyHistory[i][e] << " ";
+	// 	}
+	// 	ofs << endl;
+	// }
 
-	ofs.close();
+	// ofs.close();
 
 	return 0;
 }
