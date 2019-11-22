@@ -22,7 +22,10 @@ COMMON		= ./src/ColumnML.cpp ./src/ColumnStore.cpp
 
 .PHONY: all clean distclean
 
-all: blockwise_tests #cpu_tests fpga_tests
+all: sgd_sweep # blockwise_tests cpu_tests fpga_tests
+
+sgd_sweep: ./tests/sgd_sweep.cpp $(COMMON)./src/ColumnML.h ./src/ColumnStore.h
+	$(CXX) -D AVX2 $(CPPFLAGS) ./tests/sgd_sweep.cpp $(COMMON) -o sgd_sweep -lpthread
 
 cpu_tests: ./tests/cpu_tests.cpp $(COMMON)./src/ColumnML.h ./src/ColumnStore.h
 	$(CXX) -D HARPv2 $(CPPFLAGS) ./tests/cpu_tests.cpp $(COMMON) -o cpu_tests -lpthread
